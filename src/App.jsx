@@ -6,7 +6,7 @@ import {
 import {
   UploadCloud, Activity, Layers, RefreshCw, Eye, Info, GitBranch, Crosshair,
   Grid3X3, ArrowRight, Target, Plus, Trash2, Check, Link2, Merge,
-  AlertTriangle, Zap, Shield, FlaskConical, Brain, TestTube2
+  AlertTriangle, Zap, Shield, FlaskConical, Brain, TestTube2, TrendingUp
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
@@ -447,6 +447,15 @@ function runTests() {
 }
 
 // ── UI TOKENS & COMPONENTS ──────────────────────────────
+const T={
+  bg:"#0D1117",bgCard:"#161B22",bgSurface:"#1C2330",bgInput:"#0D1117",bgHover:"#1F2937",
+  accent:"#58A6FF",accentDim:"rgba(88,166,255,.08)",
+  border:"#30363D",
+  text:"#E6EDF3",textMuted:"#8B949E",textDim:"#484F58",
+  green:"#3FB950",red:"#F85149",redDim:"rgba(248,81,73,.15)",orange:"#D29922",yellow:"#E3B341",blue:"#58A6FF",purple:"#BC8CFF",pink:"#FF7EB3",cyan:"#39D0D8",
+  font:"'JetBrains Mono',monospace",fontSans:"'DM Sans',sans-serif",
+  r:"6px",rLg:"12px"
+};
 const crdS={background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:T.rLg,padding:"18px"};
 const lbS={fontSize:"10px",fontFamily:T.font,color:T.textMuted,textTransform:"uppercase",letterSpacing:".08em",fontWeight:500};
 const Badge=({text,color})=><span style={{display:"inline-block",padding:"2px 7px",borderRadius:"4px",fontSize:"9px",fontFamily:T.font,fontWeight:600,background:color+"20",color}}>{text}</span>;
