@@ -478,16 +478,20 @@ function Tip({active,payload}){if(!active||!payload?.length)return null;return(<
 const corrColor=r=>{if(r==null||isNaN(r))return T.textDim;const a=Math.abs(r);return a>.5?(r>0?T.green:T.red):a>.2?(r>0?"#66BB6A":"#EF5350"):T.textDim;};
 const corrBg=r=>{if(r==null||isNaN(r))return"transparent";const a=Math.min(Math.abs(r),1);const c=r>0?[34,197,94]:[240,72,72];return`rgba(${c[0]},${c[1]},${c[2]},${a*.3})`;};
 const fmt=n=>{if(n==null||isNaN(n))return"—";return Math.abs(n)>=1e5?(n/1e3).toFixed(0)+"K":Number(n.toFixed(4)).toString();};
+// Normalise a cell value for use as a join key.
+// Dates → "YYYY-MM-DD" (local time, avoids UTC-shift bugs).
+// Strings → trimmed.  Numbers/booleans → String().
+const normKey=v=>{if(v==null)return"";if(v instanceof Date){const y=v.getFullYear(),m=String(v.getMonth()+1).padStart(2,"0"),d=String(v.getDate()).padStart(2,"0");return`${y}-${m}-${d}`;}return String(v).trim();};
 
 // ── MAPPING ENGINE ──────────────────────────────────────
-function buildLookup(data,from,to){const m={};data.forEach(r=>{if(r[from]!=null&&r[to]!=null)m[String(r[from])]=String(r[to]);});return m;}
+function buildLookup(data,from,to){const m={};data.forEach(r=>{if(r[from]!=null&&r[to]!=null)m[normKey(r[from])]=normKey(r[to]);});return m;}
 function findMappingChains(wb,targetKeys,sigCols){
   const missing=targetKeys.filter(k=>!sigCols.includes(k)),chains={};
   missing.forEach(tk=>{for(const[sn,sd]of Object.entries(wb.sheets)){if(!sd.length)continue;const cols=Object.keys(sd[0]);if(!cols.includes(tk))continue;
     for(const bc of cols){if(bc===tk)continue;if(sigCols.includes(bc)){if(!chains[tk])chains[tk]=[];chains[tk].push({type:"direct",signalCol:bc,bridgeSheet:sn,bridgeFrom:bc,bridgeTo:tk,label:`${bc}→${tk} via ${sn}`});}}}});
   return{missing,chains};
 }
-function applyMappings(data,mappings,wb){let r=data.map(row=>({...row}));for(const[tk,m]of Object.entries(mappings)){if(m?.type==="direct"){const lu=buildLookup(wb.sheets[m.bridgeSheet],m.bridgeFrom,m.bridgeTo);r=r.map(row=>({...row,[tk]:lu[String(row[m.signalCol])]??null}));}}return r;}
+function applyMappings(data,mappings,wb){let r=data.map(row=>({...row}));for(const[tk,m]of Object.entries(mappings)){if(m?.type==="direct"){const lu=buildLookup(wb.sheets[m.bridgeSheet],m.bridgeFrom,m.bridgeTo);r=r.map(row=>({...row,[tk]:lu[normKey(row[m.signalCol])]??null}));}}return r;}
 
 // ── UPLOAD ──────────────────────────────────────────────
 function UploadScreen({onData}){
@@ -523,12 +527,12 @@ function ConfigScreen({wb,onConfigure}){
   const addSig=()=>{if(!nS||!nC)return;const effectiveJoinKeys=joinKeys.filter(k=>nCols.includes(k)||(effMap[k]&&effMap[k].signalCol));setSignals(s=>[...s,{sheet:nS,valueCol:nC,effectiveJoinKeys,mappings:{...effMap},label:`${nC} (${nS})`}]);setAdding(false);setNS("");setNC("");setNMap({});};
   const handleRun=()=>{
     const origCount=tData.length;
-    const agg={};tData.forEach(r=>{const k=joinKeys.map(c=>String(r[c]??"")).join("||");if(!agg[k])agg[k]={...Object.fromEntries(joinKeys.map(c=>[c,r[c]])),__t:0};agg[k].__t+=Number(r[tCol])||0;});
+    const agg={};tData.forEach(r=>{const k=joinKeys.map(c=>normKey(r[c])).join("||");if(!agg[k])agg[k]={...Object.fromEntries(joinKeys.map(c=>[c,r[c]])),__t:0};agg[k].__t+=Number(r[tCol])||0;});
     let merged=Object.values(agg);const sN=[];
     signals.forEach((sig,i)=>{let sd=applyMappings(wb.sheets[sig.sheet]||[],sig.mappings,wb);const name=sig.valueCol.replace(/\W/g,"")+"_"+i;
       const sigKeys=sig.effectiveJoinKeys&&sig.effectiveJoinKeys.length?sig.effectiveJoinKeys:joinKeys;
-      const sa={};sd.forEach(r=>{const k=sigKeys.map(c=>String(r[c]??"")).join("||");if(!k||k.replace(/\|/g,"").trim()==="")return;sa[k]=(sa[k]||0)+(Number(r[sig.valueCol])||0);});
-      merged=merged.map(r=>{const k=sigKeys.map(c=>String(r[c]??"")).join("||");return{...r,[name]:sa[k]||0};});
+      const sa={};sd.forEach(r=>{const k=sigKeys.map(c=>normKey(r[c])).join("||");if(!k||k.replace(/\|/g,"").trim()==="")return;sa[k]=(sa[k]||0)+(Number(r[sig.valueCol])||0);});
+      merged=merged.map(r=>{const k=sigKeys.map(c=>normKey(r[c])).join("||");return{...r,[name]:sa[k]||0};});
       const matchCount=merged.filter(r=>(r[name]||0)!==0).length;
       sN.push({name,label:sig.label,color:SC[i%SC.length],joinRate:matchCount/Math.max(merged.length,1),effectiveJoinKeys:sigKeys});});
     merged=merged.map(({__t,...rest})=>({...rest,[tCol]:__t}));
@@ -586,9 +590,27 @@ function ConfigScreen({wb,onConfigure}){
                       style={{background:T.bgInput,border:`1px solid ${T.border}`,borderRadius:"5px",padding:"3px 6px",color:T.text,fontFamily:T.fontSans,fontSize:"10px",width:"100%",outline:"none"}}>{opts.map((ch,ci)=><option key={ci} value={JSON.stringify(ch)}>{ch.label}</option>)}<option value="">— skip this key —</option></select></div></>
                     :<><AlertTriangle size={12} style={{color:T.orange}}/><span style={{fontFamily:T.font,fontSize:"10px",color:T.orange}}><b>"{tk}" not in this sheet</b> — this key will be <b>skipped</b> for the join. The signal will be aggregated (summed) across all {tk} values and matched on the remaining keys only. This is fine for data at a higher level of detail (e.g. national/regional data joined to a warehouse-level target).</span></></>}}
               </div>);})}</div>}
-          {nC&&joinKeys.length>0&&(()=>{const effKeys=joinKeys.filter(k=>nCols.includes(k)||(effMap[k]&&effMap[k].signalCol));const skipped=joinKeys.filter(k=>!effKeys.includes(k));return(<div style={{marginBottom:"10px",padding:"8px 12px",borderRadius:"5px",background:effKeys.length?T.accent+"10":T.red+"10",border:`1px solid ${effKeys.length?T.accent+"30":T.red+"30"}`,fontFamily:T.font,fontSize:"10px"}}>
-            {effKeys.length?<><span style={{color:T.green,fontWeight:600}}>✓ Will join on: </span><span style={{color:T.text}}>{effKeys.join(" × ")}</span>{skipped.length>0&&<><span style={{color:T.textDim}}> · </span><span style={{color:T.orange}}>aggregated across: {skipped.join(", ")}</span></>}</>:<span style={{color:T.red}}>No valid join keys — cannot add this signal. Check that the signal sheet shares at least one column with the target join keys.</span>}
-          </div>);})()}
+          {nC&&joinKeys.length>0&&(()=>{
+            const effKeys=joinKeys.filter(k=>nCols.includes(k)||(effMap[k]&&effMap[k].signalCol));
+            const skipped=joinKeys.filter(k=>!effKeys.includes(k));
+            // Build sample keys from both sides for preview
+            const tSamples=[...new Set(tData.slice(0,200).map(r=>effKeys.map(c=>normKey(r[c])).join(" | ")))].slice(0,5);
+            let sdPreview=nData;
+            try{sdPreview=applyMappings(nData,effMap,wb);}catch(e){}
+            const sSamples=[...new Set(sdPreview.slice(0,200).map(r=>effKeys.map(c=>normKey(r[c])).join(" | ")))].filter(k=>k.trim()!=="").slice(0,5);
+            const overlap=tSamples.filter(k=>sSamples.includes(k)).length;
+            return(<>
+              <div style={{marginBottom:"6px",padding:"8px 12px",borderRadius:"5px",background:effKeys.length?T.accent+"10":T.red+"10",border:`1px solid ${effKeys.length?T.accent+"30":T.red+"30"}`,fontFamily:T.font,fontSize:"10px"}}>
+                {effKeys.length?<><span style={{color:T.green,fontWeight:600}}>✓ Will join on: </span><span style={{color:T.text}}>{effKeys.join(" × ")}</span>{skipped.length>0&&<><span style={{color:T.textDim}}> · </span><span style={{color:T.orange}}>aggregated across: {skipped.join(", ")}</span></>}</>:<span style={{color:T.red}}>No valid join keys — cannot add this signal. Check that the signal sheet shares at least one column with the target join keys.</span>}
+              </div>
+              {effKeys.length>0&&<div style={{marginBottom:"10px",padding:"8px 12px",borderRadius:"5px",background:T.bgSurface,border:`1px solid ${T.border}`}}>
+                <div style={{fontFamily:T.fontSans,fontSize:"9px",color:T.textMuted,marginBottom:"6px",fontWeight:600}}>JOIN KEY PREVIEW — first 5 unique keys from each side{tSamples.length>0&&sSamples.length>0&&<span style={{color:overlap>0?T.green:T.red,marginLeft:8}}>{overlap>0?`✓ ${overlap}/${Math.max(tSamples.length,sSamples.length)} overlap`:"✗ no overlap in sample — check for type/format mismatch"}</span>}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px"}}>
+                  <div><div style={{fontFamily:T.fontSans,fontSize:"8px",color:T.textMuted,marginBottom:"3px"}}>TARGET ({tSheet})</div>{tSamples.map((k,i)=><div key={i} style={{fontFamily:T.font,fontSize:"9px",color:sSamples.includes(k)?T.green:T.text,padding:"1px 4px",background:sSamples.includes(k)?T.green+"15":"transparent",borderRadius:3,marginBottom:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{k||"(empty)"}</div>)}</div>
+                  <div><div style={{fontFamily:T.fontSans,fontSize:"8px",color:T.textMuted,marginBottom:"3px"}}>SIGNAL ({nS})</div>{sSamples.map((k,i)=><div key={i} style={{fontFamily:T.font,fontSize:"9px",color:tSamples.includes(k)?T.green:T.text,padding:"1px 4px",background:tSamples.includes(k)?T.green+"15":"transparent",borderRadius:3,marginBottom:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{k||"(empty)"}</div>)}</div>
+                </div>
+              </div>}
+            </>);})()}
           <div style={{display:"flex",gap:"8px"}}><button onClick={addSig} disabled={!nC} style={{padding:"6px 14px",borderRadius:"6px",border:"none",background:nC?T.accent:T.border,color:nC?"#000":T.textDim,fontFamily:T.fontSans,fontSize:"12px",fontWeight:600,cursor:nC?"pointer":"default"}}><Check size={12} style={{marginRight:3}}/> Add Signal</button>
             <button onClick={()=>setAdding(false)} style={{padding:"6px 14px",borderRadius:"6px",border:`1px solid ${T.border}`,background:"transparent",color:T.textMuted,fontFamily:T.fontSans,fontSize:"12px",cursor:"pointer"}}>Cancel</button></div></div>}</div>
       <button onClick={handleRun} disabled={!ok} style={{width:"100%",padding:"12px",borderRadius:"8px",border:"none",background:ok?T.accent:T.border,color:ok?"#000":T.textDim,fontFamily:T.fontSans,fontSize:"14px",fontWeight:700,cursor:ok?"pointer":"default",opacity:ok?1:.5}}>{ok?"Run Analysis →":"Select a target column, at least one join key, and at least one signal to continue"}</button>
