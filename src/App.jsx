@@ -520,14 +520,17 @@ function ConfigScreen({wb,onConfigure}){
   const joinKeys=useMemo(()=>[...(timeCol?[timeCol]:[]),...grainCols],[timeCol,grainCols]);
   const chainInfo=useMemo(()=>nS&&joinKeys.length?findMappingChains(wb,joinKeys,nCols):{missing:[],chains:{}},[wb,joinKeys,nS,nCols]);
   const effMap=useMemo(()=>{const m={...nMap};chainInfo.missing.forEach(k=>{if(!m[k]&&chainInfo.chains[k]?.length)m[k]=chainInfo.chains[k][0];});return m;},[nMap,chainInfo]);
-  const addSig=()=>{if(!nS||!nC)return;setSignals(s=>[...s,{sheet:nS,valueCol:nC,directKeys:joinKeys.filter(k=>nCols.includes(k)),mappings:{...effMap},label:`${nC} (${nS})`}]);setAdding(false);setNS("");setNC("");setNMap({});};
+  const addSig=()=>{if(!nS||!nC)return;const effectiveJoinKeys=joinKeys.filter(k=>nCols.includes(k)||(effMap[k]&&effMap[k].signalCol));setSignals(s=>[...s,{sheet:nS,valueCol:nC,effectiveJoinKeys,mappings:{...effMap},label:`${nC} (${nS})`}]);setAdding(false);setNS("");setNC("");setNMap({});};
   const handleRun=()=>{
     const origCount=tData.length;
     const agg={};tData.forEach(r=>{const k=joinKeys.map(c=>String(r[c]??"")).join("||");if(!agg[k])agg[k]={...Object.fromEntries(joinKeys.map(c=>[c,r[c]])),__t:0};agg[k].__t+=Number(r[tCol])||0;});
     let merged=Object.values(agg);const sN=[];
-    signals.forEach((sig,i)=>{let sd=applyMappings(wb.sheets[sig.sheet]||[],sig.mappings,wb);const name=sig.valueCol.replace(/\W/g,"")+"_"+i;sN.push({name,label:sig.label,color:SC[i%SC.length]});
-      const sa={};sd.forEach(r=>{const k=joinKeys.map(c=>String(r[c]??"")).join("||");if(k.includes("null")||k.includes("undefined"))return;sa[k]=(sa[k]||0)+(Number(r[sig.valueCol])||0);});
-      merged=merged.map(r=>{const k=joinKeys.map(c=>String(r[c]??"")).join("||");return{...r,[name]:sa[k]||0};});});
+    signals.forEach((sig,i)=>{let sd=applyMappings(wb.sheets[sig.sheet]||[],sig.mappings,wb);const name=sig.valueCol.replace(/\W/g,"")+"_"+i;
+      const sigKeys=sig.effectiveJoinKeys&&sig.effectiveJoinKeys.length?sig.effectiveJoinKeys:joinKeys;
+      const sa={};sd.forEach(r=>{const k=sigKeys.map(c=>String(r[c]??"")).join("||");if(!k||k.replace(/\|/g,"").trim()==="")return;sa[k]=(sa[k]||0)+(Number(r[sig.valueCol])||0);});
+      merged=merged.map(r=>{const k=sigKeys.map(c=>String(r[c]??"")).join("||");return{...r,[name]:sa[k]||0};});
+      const matchCount=merged.filter(r=>(r[name]||0)!==0).length;
+      sN.push({name,label:sig.label,color:SC[i%SC.length],joinRate:matchCount/Math.max(merged.length,1),effectiveJoinKeys:sigKeys});});
     merged=merged.map(({__t,...rest})=>({...rest,[tCol]:__t}));
     const aggRatio=origCount/Math.max(merged.length,1);
     onConfigure({data:merged,targetCol:tCol,signalNames:sN,grainCols,timeCol,joinKeys,aggRatio});};
@@ -563,7 +566,7 @@ function ConfigScreen({wb,onConfigure}){
         <div style={{fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted,marginBottom:"10px"}}>Add one or more numeric columns from other sheets. Each will be tested for correlation with your target. At least one signal is required.</div>
         {signals.map((s,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:"8px",padding:"8px 12px",marginBottom:"6px",borderRadius:T.r,background:T.bgSurface,border:`1px solid ${T.border}`}}>
           <div style={{width:8,height:8,borderRadius:"50%",background:SC[i%SC.length]}}/><div style={{flex:1}}><div style={{fontFamily:T.fontSans,fontSize:"12px",color:T.text,fontWeight:600}}>{s.valueCol}</div>
-            <div style={{fontFamily:T.font,fontSize:"10px",color:T.textDim}}>from sheet "{s.sheet}" · join: {Object.entries(s.mappings).filter(([,v])=>v).map(([k,v])=>`${v.signalCol}→${k}`).join(", ")||"direct on all keys"}</div></div>
+            <div style={{fontFamily:T.font,fontSize:"10px",color:T.textDim}}>from sheet "{s.sheet}" · joined on: <span style={{color:T.accent}}>{s.effectiveJoinKeys?.join(" × ")||"all keys"}</span>{joinKeys.filter(k=>!s.effectiveJoinKeys?.includes(k)).length>0&&<span style={{color:T.orange}}> · aggregated across: {joinKeys.filter(k=>!s.effectiveJoinKeys?.includes(k)).join(", ")}</span>}</div></div>
           <button onClick={()=>setSignals(x=>x.filter((_,j)=>j!==i))} style={{background:"transparent",border:"none",cursor:"pointer",color:T.textDim}}><Trash2 size={14}/></button></div>))}
         {!adding?<button onClick={()=>{setAdding(true);setNS(wb.sheetNames.find(s=>s!==tSheet)||wb.sheetNames[0]);}} style={{display:"flex",alignItems:"center",gap:"5px",padding:"8px",borderRadius:T.r,border:`1px dashed ${T.border}`,background:"transparent",color:T.textMuted,fontFamily:T.fontSans,fontSize:"12px",cursor:"pointer",width:"100%",justifyContent:"center"}}><Plus size={14}/> Add Signal</button>
         :<div style={{padding:"12px",borderRadius:T.r,background:T.bgSurface,border:`1px solid ${T.accent}30`}}>
@@ -581,8 +584,11 @@ function ConfigScreen({wb,onConfigure}){
                   :opts.length
                     ?<><Link2 size={12} style={{color:T.orange}}/><div style={{flex:1}}><div style={{fontFamily:T.font,fontSize:"10px",color:T.orange,marginBottom:"2px"}}>Not directly in sheet — choose a bridge mapping:</div><select value={JSON.stringify(sel||"")} onChange={e=>setNMap(m=>({...m,[tk]:e.target.value?JSON.parse(e.target.value):null}))}
                       style={{background:T.bgInput,border:`1px solid ${T.border}`,borderRadius:"5px",padding:"3px 6px",color:T.text,fontFamily:T.fontSans,fontSize:"10px",width:"100%",outline:"none"}}>{opts.map((ch,ci)=><option key={ci} value={JSON.stringify(ch)}>{ch.label}</option>)}<option value="">— skip this key —</option></select></div></>
-                    :<><AlertTriangle size={12} style={{color:T.red}}/><span style={{fontFamily:T.font,fontSize:"10px",color:T.red}}>Column "{tk}" not found in this sheet or any bridge sheet. Signal will be joined without this level — values may be aggregated across all {tk}s. To fix: add a sheet that maps between a column in this signal sheet and "{tk}".</span></>}
+                    :<><AlertTriangle size={12} style={{color:T.orange}}/><span style={{fontFamily:T.font,fontSize:"10px",color:T.orange}}><b>"{tk}" not in this sheet</b> — this key will be <b>skipped</b> for the join. The signal will be aggregated (summed) across all {tk} values and matched on the remaining keys only. This is fine for data at a higher level of detail (e.g. national/regional data joined to a warehouse-level target).</span></></>}}
               </div>);})}</div>}
+          {nC&&joinKeys.length>0&&(()=>{const effKeys=joinKeys.filter(k=>nCols.includes(k)||(effMap[k]&&effMap[k].signalCol));const skipped=joinKeys.filter(k=>!effKeys.includes(k));return(<div style={{marginBottom:"10px",padding:"8px 12px",borderRadius:"5px",background:effKeys.length?T.accent+"10":T.red+"10",border:`1px solid ${effKeys.length?T.accent+"30":T.red+"30"}`,fontFamily:T.font,fontSize:"10px"}}>
+            {effKeys.length?<><span style={{color:T.green,fontWeight:600}}>✓ Will join on: </span><span style={{color:T.text}}>{effKeys.join(" × ")}</span>{skipped.length>0&&<><span style={{color:T.textDim}}> · </span><span style={{color:T.orange}}>aggregated across: {skipped.join(", ")}</span></>}</>:<span style={{color:T.red}}>No valid join keys — cannot add this signal. Check that the signal sheet shares at least one column with the target join keys.</span>}
+          </div>);})()}
           <div style={{display:"flex",gap:"8px"}}><button onClick={addSig} disabled={!nC} style={{padding:"6px 14px",borderRadius:"6px",border:"none",background:nC?T.accent:T.border,color:nC?"#000":T.textDim,fontFamily:T.fontSans,fontSize:"12px",fontWeight:600,cursor:nC?"pointer":"default"}}><Check size={12} style={{marginRight:3}}/> Add Signal</button>
             <button onClick={()=>setAdding(false)} style={{padding:"6px 14px",borderRadius:"6px",border:`1px solid ${T.border}`,background:"transparent",color:T.textMuted,fontFamily:T.fontSans,fontSize:"12px",cursor:"pointer"}}>Cancel</button></div></div>}</div>
       <button onClick={handleRun} disabled={!ok} style={{width:"100%",padding:"12px",borderRadius:"8px",border:"none",background:ok?T.accent:T.border,color:ok?"#000":T.textDim,fontFamily:T.fontSans,fontSize:"14px",fontWeight:700,cursor:ok?"pointer":"default",opacity:ok?1:.5}}>{ok?"Run Analysis →":"Select a target column, at least one join key, and at least one signal to continue"}</button>
@@ -699,7 +705,8 @@ function Dashboard({config,onReset}){
         {signalNames.map((sig,i)=>{const m=metrics[sig.name]||{};const a=i===selIdx;return(
           <button key={i} onClick={()=>setSelIdx(i)} style={{padding:"4px 10px",borderRadius:"6px",border:`1px solid ${a?sig.color:T.border}`,background:a?sig.color+"20":"transparent",color:a?sig.color:T.textMuted,fontFamily:T.fontSans,fontSize:"11px",fontWeight:a?600:400,cursor:"pointer",display:"flex",alignItems:"center",gap:"5px"}}>
             <div style={{width:7,height:7,borderRadius:"50%",background:sig.color}}/>{sig.label}
-            {m.pr!=null&&<span style={{fontFamily:T.font,fontSize:"9px",color:corrColor(m.pr)}}>r={m.pr?.toFixed(3)}</span>}</button>);})}
+            {m.pr!=null&&<span style={{fontFamily:T.font,fontSize:"9px",color:corrColor(m.pr)}}>r={m.pr?.toFixed(3)}</span>}
+            {sig.joinRate!=null&&sig.joinRate<0.5&&<span title={`Only ${Math.round(sig.joinRate*100)}% of rows matched signal data — check join keys`} style={{fontFamily:T.font,fontSize:"9px",color:T.orange,marginLeft:2}}>⚠ {Math.round(sig.joinRate*100)}% match</span>}</button>);})}
       </div>
       {/* Tabs */}
       <div style={{padding:"8px 22px 0",display:"flex",gap:"2px",borderBottom:`1px solid ${T.border}`}}>
