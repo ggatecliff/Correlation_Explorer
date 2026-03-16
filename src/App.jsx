@@ -505,7 +505,7 @@ function ConfigScreen({wb,onConfigure}){
   const nData=useMemo(()=>nS?wb.sheets[nS]||[]:[], [wb,nS]);const nCols=useMemo(()=>nData.length?Object.keys(nData[0]):[],[nData]);
   const nNum=useMemo(()=>nCols.filter(c=>nData.slice(0,20).some(r=>typeof r[c]==="number")),[nCols,nData]);
   const joinKeys=useMemo(()=>[...(timeCol?[timeCol]:[]),...grainCols],[timeCol,grainCols]);
-  const chainInfo=useMemo(()=>nS&&joinKeys.length?findMappingChains(wb,joinKeys,nS,nCols):{missing:[],chains:{}},[wb,joinKeys,nS,nCols]);
+  const chainInfo=useMemo(()=>nS&&joinKeys.length?findMappingChains(wb,joinKeys,nCols):{missing:[],chains:{}},[wb,joinKeys,nS,nCols]);
   const effMap=useMemo(()=>{const m={...nMap};chainInfo.missing.forEach(k=>{if(!m[k]&&chainInfo.chains[k]?.length)m[k]=chainInfo.chains[k][0];});return m;},[nMap,chainInfo]);
   const addSig=()=>{if(!nS||!nC)return;setSignals(s=>[...s,{sheet:nS,valueCol:nC,directKeys:joinKeys.filter(k=>nCols.includes(k)),mappings:{...effMap},label:`${nC} (${nS})`}]);setAdding(false);setNS("");setNC("");setNMap({});};
   const handleRun=()=>{
@@ -520,36 +520,57 @@ function ConfigScreen({wb,onConfigure}){
   return(<div style={{background:T.bg,minHeight:"100vh",padding:"40px",display:"flex",flexDirection:"column",alignItems:"center"}}>
     <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}select option{background:${T.bgCard};color:${T.text}}`}</style>
     <div style={{maxWidth:"750px",width:"100%"}}>
-      <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"24px"}}><Crosshair size={20} style={{color:T.accent}}/><div style={{fontFamily:T.fontSans,fontSize:"18px",fontWeight:700,color:T.text}}>Configure</div><Badge text={wb.fileName} color={T.textMuted}/></div>
-      <div style={{...crdS,marginBottom:"14px"}}><div style={{...lbS,marginBottom:"10px"}}><Target size={12} style={{marginRight:4}}/> Target</div>
-        <div style={{display:"flex",gap:"12px",flexWrap:"wrap",marginBottom:"10px"}}><Sel label="Sheet" value={tSheet} options={wb.sheetNames.map(s=>({value:s,label:`${s} (${(wb.sheets[s]||[]).length})`}))} onChange={s=>{setTSheet(s);setTCol("");setTimeCol("");setGrainCols([]);setSignals([]);}} width="250px"/>
-          <Sel label="Value" value={tCol} options={[{value:"",label:"Select..."},...tNum.map(c=>({value:c,label:c}))]} onChange={setTCol} width="200px"/></div>
-        <div style={{...lbS,fontSize:"9px",marginBottom:"4px"}}>Time Column</div>
+      <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"16px"}}><Crosshair size={20} style={{color:T.accent}}/><div style={{fontFamily:T.fontSans,fontSize:"18px",fontWeight:700,color:T.text}}>Configure Analysis</div><Badge text={wb.fileName} color={T.textMuted}/></div>
+      {/* How it works banner */}
+      <div style={{...crdS,marginBottom:"14px",background:T.accentDim,border:`1px solid ${T.accent}30`,padding:"12px 16px"}}>
+        <div style={{fontFamily:T.fontSans,fontSize:"12px",color:T.accent,fontWeight:600,marginBottom:"4px"}}><Info size={12} style={{marginRight:4,display:"inline",verticalAlign:"middle"}}/> How this works</div>
+        <div style={{fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted,lineHeight:1.6}}>
+          <b style={{color:T.text}}>Step 1 — Target:</b> pick the sheet and column you want to explain (e.g. "Revenue").<br/>
+          <b style={{color:T.text}}>Step 2 — Time + Level (Grain):</b> select the date column and any dimension columns you analyse at (e.g. Part, Site, Customer). These become your join keys — signals are matched to the target row-by-row using them.<br/>
+          <b style={{color:T.text}}>Step 3 — Signals:</b> add predictors from other sheets. The tool auto-detects how to join them via matching columns. If a join key is missing from the signal sheet, it searches all other sheets for a bridge mapping.
+        </div>
+      </div>
+      <div style={{...crdS,marginBottom:"14px"}}>
+        <div style={{...lbS,marginBottom:"6px"}}><Target size={12} style={{marginRight:4}}/> Step 1 — Target (the metric you want to explain)</div>
+        <div style={{fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted,marginBottom:"10px"}}>Choose the sheet and column containing the value you want to analyse (e.g. sales, defects, revenue). Only numeric columns are listed.</div>
+        <div style={{display:"flex",gap:"12px",flexWrap:"wrap",marginBottom:"10px"}}><Sel label="Sheet" value={tSheet} options={wb.sheetNames.map(s=>({value:s,label:`${s} (${(wb.sheets[s]||[]).length} rows)`}))} onChange={s=>{setTSheet(s);setTCol("");setTimeCol("");setGrainCols([]);setSignals([]);}} width="250px"/>
+          <Sel label="Target value column" value={tCol} options={[{value:"",label:"Select numeric column..."},...tNum.map(c=>({value:c,label:c}))]} onChange={setTCol} width="220px"/></div>
+        <div style={{...lbS,fontSize:"9px",marginBottom:"3px"}}>Time Column <span style={{color:T.textDim,textTransform:"none",fontSize:"9px",fontWeight:400}}>— the date/period column that aligns rows across sheets</span></div>
         <div style={{display:"flex",flexWrap:"wrap",gap:"4px",marginBottom:"8px"}}>{tCols.filter(c=>c!==tCol).map(c=><Chip key={c} label={c} active={timeCol===c} color={T.accent} onClick={()=>setTimeCol(timeCol===c?"":c)}/>)}</div>
-        <div style={{...lbS,fontSize:"9px",marginBottom:"4px"}}>Grain Columns</div>
+        <div style={{...lbS,fontSize:"9px",marginBottom:"3px"}}>Level / Grain Columns <span style={{color:T.textDim,textTransform:"none",fontSize:"9px",fontWeight:400}}>— dimensions to analyse at (e.g. Part, Site, Customer). Select all that apply.</span></div>
         <div style={{display:"flex",flexWrap:"wrap",gap:"4px"}}>{tCols.filter(c=>c!==timeCol&&c!==tCol).map(c=><Chip key={c} label={c} active={grainCols.includes(c)} color={T.blue} onClick={()=>setGrainCols(g=>g.includes(c)?g.filter(x=>x!==c):[...g,c])}/>)}</div>
-        {joinKeys.length>0&&<div style={{marginTop:"6px",fontFamily:T.font,fontSize:"10px",color:T.textMuted}}>Join: <span style={{color:T.accent}}>{joinKeys.join(" × ")}</span></div>}</div>
-      <div style={{...crdS,marginBottom:"14px"}}><div style={{...lbS,marginBottom:"10px"}}><Layers size={12} style={{marginRight:4}}/> Signals</div>
+        {joinKeys.length>0&&<div style={{marginTop:"8px",padding:"6px 10px",borderRadius:"5px",background:T.accent+"10",border:`1px solid ${T.accent}20`,fontFamily:T.font,fontSize:"10px",color:T.textMuted}}>
+          <span style={{color:T.accent,fontWeight:600}}>Join key(s): {joinKeys.join(" × ")}</span> — signals will be matched row-by-row on these columns.</div>}
+        {joinKeys.length===0&&tCol&&<div style={{marginTop:"8px",padding:"6px 10px",borderRadius:"5px",background:T.orange+"10",border:`1px solid ${T.orange}30`,fontFamily:T.font,fontSize:"10px",color:T.orange}}><AlertTriangle size={11} style={{marginRight:4,display:"inline",verticalAlign:"middle"}}/>Select at least one Time or Level column so signals can be joined to the target.</div>}
+      </div>
+      <div style={{...crdS,marginBottom:"14px"}}>
+        <div style={{...lbS,marginBottom:"6px"}}><Layers size={12} style={{marginRight:4}}/> Step 3 — Signals (predictors to test)</div>
+        <div style={{fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted,marginBottom:"10px"}}>Add one or more numeric columns from other sheets. Each will be tested for correlation with your target. At least one signal is required.</div>
         {signals.map((s,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:"8px",padding:"8px 12px",marginBottom:"6px",borderRadius:T.r,background:T.bgSurface,border:`1px solid ${T.border}`}}>
           <div style={{width:8,height:8,borderRadius:"50%",background:SC[i%SC.length]}}/><div style={{flex:1}}><div style={{fontFamily:T.fontSans,fontSize:"12px",color:T.text,fontWeight:600}}>{s.valueCol}</div>
-            <div style={{fontFamily:T.font,fontSize:"10px",color:T.textDim}}>from {s.sheet} · mapped: {Object.entries(s.mappings).filter(([,v])=>v).map(([k,v])=>`${v.signalCol}→${k}`).join(", ")||"direct"}</div></div>
+            <div style={{fontFamily:T.font,fontSize:"10px",color:T.textDim}}>from sheet "{s.sheet}" · join: {Object.entries(s.mappings).filter(([,v])=>v).map(([k,v])=>`${v.signalCol}→${k}`).join(", ")||"direct on all keys"}</div></div>
           <button onClick={()=>setSignals(x=>x.filter((_,j)=>j!==i))} style={{background:"transparent",border:"none",cursor:"pointer",color:T.textDim}}><Trash2 size={14}/></button></div>))}
         {!adding?<button onClick={()=>{setAdding(true);setNS(wb.sheetNames.find(s=>s!==tSheet)||wb.sheetNames[0]);}} style={{display:"flex",alignItems:"center",gap:"5px",padding:"8px",borderRadius:T.r,border:`1px dashed ${T.border}`,background:"transparent",color:T.textMuted,fontFamily:T.fontSans,fontSize:"12px",cursor:"pointer",width:"100%",justifyContent:"center"}}><Plus size={14}/> Add Signal</button>
         :<div style={{padding:"12px",borderRadius:T.r,background:T.bgSurface,border:`1px solid ${T.accent}30`}}>
+          <div style={{fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted,marginBottom:"8px"}}>Select the sheet and column for this predictor signal.</div>
           <div style={{display:"flex",gap:"10px",marginBottom:"10px"}}><Sel label="Sheet" value={nS} options={wb.sheetNames.map(s=>({value:s,label:s}))} onChange={s=>{setNS(s);setNC("");setNMap({});}} width="220px"/>
-            <Sel label="Value" value={nC} options={[{value:"",label:"Select..."},...nNum.map(c=>({value:c,label:c}))]} onChange={setNC} width="200px"/></div>
-          {joinKeys.length>0&&nS&&<div style={{marginBottom:"10px"}}><div style={{...lbS,fontSize:"9px",marginBottom:"6px"}}><Link2 size={10} style={{marginRight:3}}/>Column Mapping</div>
+            <Sel label="Signal column (numeric)" value={nC} options={[{value:"",label:"Select numeric column..."},...nNum.map(c=>({value:c,label:c}))]} onChange={setNC} width="220px"/></div>
+          {joinKeys.length>0&&nS&&<div style={{marginBottom:"10px"}}>
+            <div style={{...lbS,fontSize:"9px",marginBottom:"3px"}}><Link2 size={10} style={{marginRight:3}}/>How each join key maps to this signal sheet</div>
+            <div style={{fontFamily:T.fontSans,fontSize:"10px",color:T.textDim,marginBottom:"6px"}}>For each level/time column in your join key, the tool checks whether the signal sheet has a matching column. If not, it searches all sheets for a bridge lookup.</div>
             {joinKeys.map(tk=>{const direct=nCols.includes(tk);const opts=chainInfo.chains[tk]||[];const sel=effMap[tk];return(
-              <div key={tk} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px",padding:"5px 8px",borderRadius:"5px",background:direct?T.accent+"10":opts.length?T.orange+"10":T.red+"10",border:`1px solid ${direct?T.accent+"30":opts.length?T.orange+"30":T.red+"30"}`}}>
-                <span style={{fontFamily:T.font,fontSize:"11px",color:T.accent,minWidth:"110px",fontWeight:600}}>{tk}</span>
-                {direct?<><Check size={13} style={{color:T.green}}/><span style={{fontFamily:T.font,fontSize:"10px",color:T.green}}>Direct match</span></>
-                :opts.length?<><Link2 size={12} style={{color:T.orange}}/><select value={JSON.stringify(sel||"")} onChange={e=>setNMap(m=>({...m,[tk]:e.target.value?JSON.parse(e.target.value):null}))}
-                  style={{background:T.bgInput,border:`1px solid ${T.border}`,borderRadius:"5px",padding:"3px 6px",color:T.text,fontFamily:T.fontSans,fontSize:"10px",flex:1,outline:"none"}}>{opts.map((ch,ci)=><option key={ci} value={JSON.stringify(ch)}>{ch.label}</option>)}<option value="">— skip —</option></select></>
-                :<><AlertTriangle size={12} style={{color:T.red}}/><span style={{fontFamily:T.font,fontSize:"10px",color:T.red}}>No mapping — will aggregate without</span></>}
+              <div key={tk} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px",padding:"7px 10px",borderRadius:"5px",background:direct?T.accent+"10":opts.length?T.orange+"10":T.red+"10",border:`1px solid ${direct?T.accent+"30":opts.length?T.orange+"30":T.red+"30"}`}}>
+                <span style={{fontFamily:T.font,fontSize:"11px",color:T.accent,minWidth:"120px",fontWeight:600}}>{tk}</span>
+                {direct
+                  ?<><Check size={13} style={{color:T.green}}/><span style={{fontFamily:T.font,fontSize:"10px",color:T.green}}>Column "{tk}" found directly in this sheet — exact join</span></>
+                  :opts.length
+                    ?<><Link2 size={12} style={{color:T.orange}}/><div style={{flex:1}}><div style={{fontFamily:T.font,fontSize:"10px",color:T.orange,marginBottom:"2px"}}>Not directly in sheet — choose a bridge mapping:</div><select value={JSON.stringify(sel||"")} onChange={e=>setNMap(m=>({...m,[tk]:e.target.value?JSON.parse(e.target.value):null}))}
+                      style={{background:T.bgInput,border:`1px solid ${T.border}`,borderRadius:"5px",padding:"3px 6px",color:T.text,fontFamily:T.fontSans,fontSize:"10px",width:"100%",outline:"none"}}>{opts.map((ch,ci)=><option key={ci} value={JSON.stringify(ch)}>{ch.label}</option>)}<option value="">— skip this key —</option></select></div></>
+                    :<><AlertTriangle size={12} style={{color:T.red}}/><span style={{fontFamily:T.font,fontSize:"10px",color:T.red}}>Column "{tk}" not found in this sheet or any bridge sheet. Signal will be joined without this level — values may be aggregated across all {tk}s. To fix: add a sheet that maps between a column in this signal sheet and "{tk}".</span></>}
               </div>);})}</div>}
-          <div style={{display:"flex",gap:"8px"}}><button onClick={addSig} disabled={!nC} style={{padding:"6px 14px",borderRadius:"6px",border:"none",background:nC?T.accent:T.border,color:nC?"#000":T.textDim,fontFamily:T.fontSans,fontSize:"12px",fontWeight:600,cursor:nC?"pointer":"default"}}><Check size={12} style={{marginRight:3}}/> Add</button>
+          <div style={{display:"flex",gap:"8px"}}><button onClick={addSig} disabled={!nC} style={{padding:"6px 14px",borderRadius:"6px",border:"none",background:nC?T.accent:T.border,color:nC?"#000":T.textDim,fontFamily:T.fontSans,fontSize:"12px",fontWeight:600,cursor:nC?"pointer":"default"}}><Check size={12} style={{marginRight:3}}/> Add Signal</button>
             <button onClick={()=>setAdding(false)} style={{padding:"6px 14px",borderRadius:"6px",border:`1px solid ${T.border}`,background:"transparent",color:T.textMuted,fontFamily:T.fontSans,fontSize:"12px",cursor:"pointer"}}>Cancel</button></div></div>}</div>
-      <button onClick={handleRun} disabled={!ok} style={{width:"100%",padding:"12px",borderRadius:"8px",border:"none",background:ok?T.accent:T.border,color:ok?"#000":T.textDim,fontFamily:T.fontSans,fontSize:"14px",fontWeight:700,cursor:ok?"pointer":"default",opacity:ok?1:.5}}>Analyze →</button>
+      <button onClick={handleRun} disabled={!ok} style={{width:"100%",padding:"12px",borderRadius:"8px",border:"none",background:ok?T.accent:T.border,color:ok?"#000":T.textDim,fontFamily:T.fontSans,fontSize:"14px",fontWeight:700,cursor:ok?"pointer":"default",opacity:ok?1:.5}}>{ok?"Run Analysis →":"Select a target column, at least one join key, and at least one signal to continue"}</button>
     </div></div>);
 }
 
@@ -667,11 +688,17 @@ function Dashboard({config,onReset}){
 
         {/* TAB: ALL METRICS */}
         {tab==="metrics"&&<>
+          <div style={{padding:"10px 14px",borderRadius:T.r,background:T.bgSurface,border:`1px solid ${T.border}`,fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted,lineHeight:1.7}}>
+            <b style={{color:T.text}}>Reading this table:</b> Each row is one signal (predictor). Columns show 11 different ways to measure dependence with the target. <span style={{color:T.green}}>Green</span> = strong/significant. <span style={{color:T.red}}>Red</span> = weak/not significant. The <b style={{color:T.text}}>Verdict</b> counts how many of 7 criteria pass — <b style={{color:T.green}}>PASS (≥4)</b> means multiple methods agree the signal is correlated with the target; <b style={{color:T.orange}}>INVESTIGATE (2–3)</b> means mixed evidence; <b style={{color:T.red}}>FAIL (&lt;2)</b> means little evidence of correlation.
+          </div>
           <div style={crdS}>
             <div style={{...lbS,marginBottom:"8px"}}><Grid3X3 size={12} style={{marginRight:4}}/> Complete Dependence Matrix — 11 Methods</div>
             <div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",fontFamily:T.font,fontSize:"10px",width:"100%"}}>
-              <thead><tr>{["Signal","N","Pearson","p","Spearman","p","Kendall","dCor","MI","Perm p","CI","ACF","ADF","Granger p","Best Lag","Verdict"].map(h=>
-                <th key={h} style={{padding:"4px 6px",textAlign:"center",color:T.textMuted,borderBottom:`1px solid ${T.border}`,fontSize:"8px",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+              <thead>
+                <tr><th colSpan={4} style={{padding:"2px 6px",textAlign:"center",color:T.accent,borderBottom:`1px solid ${T.border}`,fontSize:"8px",borderRight:`1px solid ${T.border}30`}}>Linear Correlation</th><th colSpan={2} style={{padding:"2px 6px",textAlign:"center",color:T.cyan,borderBottom:`1px solid ${T.border}`,fontSize:"8px",borderRight:`1px solid ${T.border}30`}}>Nonlinear</th><th colSpan={4} style={{padding:"2px 6px",textAlign:"center",color:T.purple,borderBottom:`1px solid ${T.border}`,fontSize:"8px",borderRight:`1px solid ${T.border}30`}}>Robustness</th><th colSpan={4} style={{padding:"2px 6px",textAlign:"center",color:T.orange,borderBottom:`1px solid ${T.border}`,fontSize:"8px"}}> Time Series / Causality</th><th style={{borderBottom:`1px solid ${T.border}`}}/></tr>
+                <tr>{[["Signal",""],["N","# matched rows"],["Pearson r","Linear correlation (-1 to 1). Strong if |r|>0.3"],["p","p-value: <0.05 = significant"],["Spearman r","Rank correlation — captures monotonic (not just linear) relationships"],["p",""],["Kendall τ","Another rank correlation — more robust to outliers"],["dCor","Distance Correlation: detects ANY dependence including nonlinear. 0–1."],["MI","Mutual Information: information shared between signal and target. Higher = more dependence."],["Perm p","Permutation test p-value: is the correlation stronger than chance? <0.05 = yes."],["95% CI","Bootstrap confidence interval for Pearson r. If it contains 0, correlation may be noise."],["ACF lag1","Autocorrelation of signal at lag 1 — high means the signal has strong time persistence"],["ADF","Augmented Dickey-Fuller: S=Stationary (good for modelling), NS=Non-stationary (has a trend)"],["Granger p","Granger causality: does the signal's past help predict the target's future? <0.05 = yes."],["Best Lag","The lag at which cross-correlation (CCF) peaks. Negative = signal leads target."],["Verdict","How many of 7 criteria pass. PASS≥4, INVESTIGATE 2–3, FAIL<2"]].map(([h,title])=>
+                <th key={h} title={title} style={{padding:"4px 6px",textAlign:"center",color:T.textMuted,borderBottom:`1px solid ${T.border}`,fontSize:"8px",whiteSpace:"nowrap",cursor:title?"help":"default"}}>{h}</th>)}</tr>
+              </thead>
               <tbody>{signalNames.map((sig,i)=>{const m=metrics[sig.name]||{};const a=i===selIdx;
                 const nCrit=[Math.abs(m.pr||0)>.15,Math.abs(m.sr||0)>.15,(m.dc||0)>.15,(m.mi||0)>.05,m.granger?.significant,m.best?.lag<0&&Math.abs(m.best?.r||0)>.1,(m.permP||1)<.05].filter(Boolean).length;
                 const verdict=nCrit>=4?"PASS":nCrit>=2?"INVESTIGATE":"FAIL";const vc=verdict==="PASS"?T.green:verdict==="INVESTIGATE"?T.orange:T.red;
@@ -706,6 +733,9 @@ function Dashboard({config,onReset}){
 
         {/* TAB: SCATTER + LOWESS */}
         {tab==="scatter"&&<>
+          <div style={{padding:"8px 12px",borderRadius:T.r,background:T.bgSurface,border:`1px solid ${T.border}`,fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted}}>
+            <b style={{color:T.text}}>Scatter plot</b> shows each paired (signal, target) observation. The dashed line is the linear regression fit. <b style={{color:T.text}}>LOWESS</b> is a non-parametric smoother — if it curves strongly, the relationship is nonlinear and Pearson alone may understate the true dependence. Click any thumbnail below to focus that signal.
+          </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"14px"}}>
             <div style={crdS}><div style={{...lbS,marginBottom:"8px"}}><Crosshair size={12} style={{marginRight:4}}/> Scatter + Trend <Badge text={`n=${sd.length}`} color={T.textMuted}/></div>
               <ResponsiveContainer width="100%" height={280}><ComposedChart data={sd}><CartesianGrid strokeDasharray="3 3" stroke={T.border}/><XAxis dataKey="x" type="number" tick={{fill:T.textDim,fontSize:9,fontFamily:T.font}} stroke={T.border}/><YAxis dataKey="y" type="number" tick={{fill:T.textDim,fontSize:9,fontFamily:T.font}} stroke={T.border}/>
@@ -728,30 +758,45 @@ function Dashboard({config,onReset}){
 
         {/* TAB: CCF + GRANGER */}
         {tab==="ccf"&&<>
+          <div style={{padding:"8px 12px",borderRadius:T.r,background:T.bgSurface,border:`1px solid ${T.border}`,fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted}}>
+            <b style={{color:T.accent}}>CCF (Cross-Correlation Function)</b> — bars show correlation between the signal and target at different time offsets (lags). <b style={{color:T.accent}}>Blue bars = negative lag</b> (signal leads target — potentially predictive). <b style={{color:T.orange}}>Orange bars = positive lag</b> (signal follows target). The peak bar is your best leading indicator lag. Pair with Granger to confirm predictive power.
+          </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"14px"}}>
             <div style={crdS}><div style={{...lbS,marginBottom:"8px",display:"flex",justifyContent:"space-between"}}><span><GitBranch size={12} style={{marginRight:4}}/> CCF</span><Sel value={maxLag} options={[4,8,12,16].map(v=>({value:v,label:`±${v}`}))} onChange={v=>setMaxLag(Number(v))} width="60px"/></div>
               <ResponsiveContainer width="100%" height={260}><BarChart data={sm.ccf||[]}><CartesianGrid strokeDasharray="3 3" stroke={T.border}/><XAxis dataKey="lag" tick={{fill:T.textDim,fontSize:9,fontFamily:T.font}} stroke={T.border}/><YAxis tick={{fill:T.textDim,fontSize:9,fontFamily:T.font}} stroke={T.border}/><Tooltip content={({active:a,payload:p})=>{if(!a||!p?.length)return null;const d=p[0]?.payload;return(<div style={{background:"#1A2232",border:`1px solid ${T.border}`,borderRadius:"6px",padding:"6px",fontSize:"10px",fontFamily:T.font}}><div style={{color:corrColor(d?.r)}}>Lag {d?.lag}: r={d?.r?.toFixed(4)}</div></div>);}}/>
                 <ReferenceLine y={0} stroke={T.textDim} strokeDasharray="2 2"/><Bar dataKey="r">{(sm.ccf||[]).map((e,i)=><Cell key={i} fill={e.lag<0?T.accent:e.lag>0?T.orange:T.text} opacity={Math.abs(e.r)>.1?.8:.3}/>)}</Bar></BarChart></ResponsiveContainer></div>
-            <div style={crdS}><div style={{...lbS,marginBottom:"10px"}}><Shield size={12} style={{marginRight:4}}/> Granger + Stationarity</div>
-              <div style={{fontFamily:T.font,fontSize:"11px",lineHeight:2}}>
-                <div><span style={{color:T.textMuted}}>ADF (signal):</span> <span style={{color:sm.adfSig?.stationary?T.green:T.red}}>{sm.adfSig?.stationary?"Stationary ✓":"Non-stationary ⚠"}</span> <span style={{color:T.textDim}}>p={sm.adfSig?.p?.toFixed(4)}</span></div>
-                <div><span style={{color:T.textMuted}}>ACF lag-1 (signal):</span> <span style={{color:Math.abs(sm.acfSig||0)>.3?T.orange:T.green}}>{sm.acfSig?.toFixed(4)}</span> {Math.abs(sm.acfSig||0)>.3&&<Badge text="HIGH" color={T.orange}/>}</div>
-                <div style={{borderTop:`1px solid ${T.border}`,paddingTop:"6px",marginTop:"4px"}}>
-                  <span style={{color:T.textMuted}}>Granger:</span> <span style={{color:sm.granger?.significant?T.green:T.red,fontWeight:600}}>{sm.granger?.significant?"CAUSAL ✓":"NOT CAUSAL ✗"}</span></div>
-                <div><span style={{color:T.textDim}}>best lag={sm.granger?.bestLag}, p={sm.granger?.bestP?.toFixed(4)}</span></div>
-                <div style={{borderTop:`1px solid ${T.border}`,paddingTop:"6px",marginTop:"4px"}}>
-                  <span style={{color:T.textMuted}}>Perm test:</span> <span style={{color:typeof sm.permP==="number"&&sm.permP<.05?T.green:T.red}}>{typeof sm.permP==="number"?`p=${sm.permP.toFixed(4)}`:"—"}</span></div>
-                <div><span style={{color:T.textMuted}}>95% CI:</span> <span style={{color:T.text}}>[{sm.ciLo?.toFixed(3)}, {sm.ciHi?.toFixed(3)}]</span> {sm.ciLo!=null&&sm.ciLo<=0&&sm.ciHi>=0&&<Badge text="contains 0" color={T.orange}/>}</div>
+            <div style={crdS}><div style={{...lbS,marginBottom:"10px"}}><Shield size={12} style={{marginRight:4}}/> Granger Causality + Stationarity</div>
+              <div style={{fontFamily:T.fontSans,fontSize:"11px",lineHeight:1.8}}>
+                <div style={{padding:"6px 8px",borderRadius:"5px",background:sm.adfSig?.stationary?T.green+"10":T.orange+"10",border:`1px solid ${sm.adfSig?.stationary?T.green+"30":T.orange+"30"}`,marginBottom:"6px"}}>
+                  <div style={{fontWeight:600,color:sm.adfSig?.stationary?T.green:T.orange}}>ADF Stationarity: {sm.adfSig?.stationary?"Stationary ✓":"Non-stationary ⚠"}</div>
+                  <div style={{fontSize:"10px",color:T.textDim}}>stat={sm.adfSig?.stat?.toFixed(3)}, p={sm.adfSig?.p?.toFixed(4)} — {sm.adfSig?.stationary?"Signal fluctuates around a constant mean. Good for correlation analysis.":"Signal has a trend or drift. Correlations may be spurious — interpret with caution."}</div>
+                </div>
+                <div style={{padding:"6px 8px",borderRadius:"5px",background:Math.abs(sm.acfSig||0)>.3?T.orange+"10":"transparent",border:`1px solid ${Math.abs(sm.acfSig||0)>.3?T.orange+"30":T.border}`,marginBottom:"6px"}}>
+                  <div style={{fontWeight:600,color:Math.abs(sm.acfSig||0)>.3?T.orange:T.green}}>ACF lag-1: {sm.acfSig?.toFixed(4)} {Math.abs(sm.acfSig||0)>.3&&<Badge text="HIGH AUTOCORR" color={T.orange}/>}</div>
+                  <div style={{fontSize:"10px",color:T.textDim}}>{Math.abs(sm.acfSig||0)>.3?"Signal is strongly autocorrelated — today's value is heavily influenced by yesterday's. Granger tests account for this.":"Signal is not strongly autocorrelated. Each observation is relatively independent."}</div>
+                </div>
+                <div style={{padding:"6px 8px",borderRadius:"5px",background:sm.granger?.significant?T.green+"10":T.red+"10",border:`1px solid ${sm.granger?.significant?T.green+"30":T.red+"30"}`,marginBottom:"6px"}}>
+                  <div style={{fontWeight:600,color:sm.granger?.significant?T.green:T.red}}>Granger Causality: {sm.granger?.significant?"CAUSAL ✓":"NOT CAUSAL ✗"}</div>
+                  <div style={{fontSize:"10px",color:T.textDim}}>Best lag={sm.granger?.bestLag}, p={sm.granger?.bestP?.toFixed(4)} — {sm.granger?.significant?`Past values of this signal significantly improve forecasts of the target at lag ${sm.granger?.bestLag}. Strong evidence of leading relationship.`:"Past values of this signal do not significantly improve forecasts of the target. May be coincident or lagging."}</div>
+                </div>
+                <div style={{padding:"6px 8px",borderRadius:"5px",background:T.bgSurface,border:`1px solid ${T.border}`}}>
+                  <div style={{fontWeight:600,color:T.text}}>Robustness Checks</div>
+                  <div style={{fontSize:"10px",color:T.textDim}}>Permutation test: <span style={{color:typeof sm.permP==="number"&&sm.permP<.05?T.green:T.red}}>{typeof sm.permP==="number"?`p=${sm.permP.toFixed(4)} — ${sm.permP<0.05?"correlation is stronger than chance":"correlation may be due to chance"}`:"—"}</span></div>
+                  <div style={{fontSize:"10px",color:T.textDim}}>95% Bootstrap CI: <span style={{color:T.text}}>[{sm.ciLo?.toFixed(3)}, {sm.ciHi?.toFixed(3)}]</span> {sm.ciLo!=null&&sm.ciLo<=0&&sm.ciHi>=0&&<><Badge text="contains 0" color={T.orange}/> <span style={{color:T.orange}}>— interval includes 0, so true correlation may be near zero</span></>}</div>
+                </div>
               </div></div>
           </div>
         </>}
 
         {/* TAB: ML */}
         {tab==="ml"&&<>
+          <div style={{padding:"8px 12px",borderRadius:T.r,background:T.bgSurface,border:`1px solid ${T.border}`,fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted,lineHeight:1.6}}>
+            <b style={{color:T.text}}>ML Analysis</b> trains a <b style={{color:T.text}}>Gradient Boosting Machine</b> in your browser on all signals + their lags, then measures <b style={{color:T.text}}>Permutation Importance</b> (how much accuracy drops when each feature is randomly shuffled) and <b style={{color:T.text}}>Walk-Forward Validation</b> (out-of-sample RMSE on future periods, retraining as new data arrives). <b style={{color:T.green}}>LIFT</b> = adding that signal reduced forecast error vs using only the target's own history.
+          </div>
           <div style={crdS}>
-            <div style={{...lbS,marginBottom:"10px"}}><Brain size={12} style={{marginRight:4}}/> ML Feature Importance + Walk-Forward</div>
+            <div style={{...lbS,marginBottom:"10px"}}><Brain size={12} style={{marginRight:4}}/> ML Feature Importance + Walk-Forward Validation</div>
             {!mlDone&&!mlRunning&&<div style={{textAlign:"center",padding:"30px"}}>
-              <div style={{fontFamily:T.fontSans,fontSize:"13px",color:T.textMuted,marginBottom:"12px"}}>Trains a gradient boosting model in-browser, computes permutation importance, and runs walk-forward validation to measure lift per signal.</div>
+              <div style={{fontFamily:T.fontSans,fontSize:"13px",color:T.textMuted,marginBottom:"12px"}}>Trains a gradient boosting model in-browser using all signals and their lags, computes permutation importance, and runs walk-forward validation to measure forecast lift per signal.</div>
               <button onClick={runML} style={{padding:"10px 24px",borderRadius:"8px",border:"none",background:T.accent,color:"#000",fontFamily:T.fontSans,fontSize:"13px",fontWeight:700,cursor:"pointer"}}><Zap size={14} style={{marginRight:4}}/> Run ML Analysis</button></div>}
             {mlRunning&&<div style={{textAlign:"center",padding:"30px"}}><div style={{color:T.accent,fontSize:"14px",fontFamily:T.fontSans}}>Training model...</div></div>}
             {mlDone&&!mlDone.error&&<>
@@ -777,22 +822,34 @@ function Dashboard({config,onReset}){
         {/* TAB: TESTS */}
         {tab==="tests"&&<>
           <div style={crdS}>
-            <div style={{...lbS,marginBottom:"10px"}}><TestTube2 size={12} style={{marginRight:4}}/> Built-in Test Suite</div>
+            <div style={{...lbS,marginBottom:"6px"}}><TestTube2 size={12} style={{marginRight:4}}/> Built-in Statistical Test Suite</div>
+            <div style={{fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted,marginBottom:"12px",lineHeight:1.6}}>
+              These tests validate every statistical method against <b style={{color:T.text}}>known mathematical results</b> — e.g. a perfect linear relationship must yield Pearson r=1, independent random series must have low mutual information. Run this to confirm the engine is working correctly in your browser.
+            </div>
             {!testResults?<div style={{textAlign:"center",padding:"20px"}}>
-              <div style={{fontFamily:T.fontSans,fontSize:"13px",color:T.textMuted,marginBottom:"12px"}}>Runs {">"}25 tests validating every statistical method against known values.</div>
-              <button onClick={()=>setTestResults(runTests())} style={{padding:"10px 24px",borderRadius:"8px",border:"none",background:T.blue,color:"#fff",fontFamily:T.fontSans,fontSize:"13px",fontWeight:700,cursor:"pointer"}}><FlaskConical size={14} style={{marginRight:4}}/> Run Tests</button></div>
+              <button onClick={()=>setTestResults(runTests())} style={{padding:"10px 24px",borderRadius:"8px",border:"none",background:T.blue,color:"#fff",fontFamily:T.fontSans,fontSize:"13px",fontWeight:700,cursor:"pointer"}}><FlaskConical size={14} style={{marginRight:4}}/> Run All Tests</button></div>
             :<>
-              <div style={{marginBottom:"10px",fontFamily:T.font,fontSize:"12px"}}>
-                <span style={{color:T.green}}>{testResults.filter(t=>t.ok).length} passed</span> / <span style={{color:T.red}}>{testResults.filter(t=>!t.ok).length} failed</span> / {testResults.length} total
-                {testResults.every(t=>t.ok)&&<Badge text="ALL PASSED ✓" color={T.green}/>}
+              <div style={{marginBottom:"12px",padding:"8px 12px",borderRadius:T.r,background:testResults.every(t=>t.ok)?T.green+"10":T.red+"10",border:`1px solid ${testResults.every(t=>t.ok)?T.green+"30":T.red+"30"}`,fontFamily:T.fontSans,fontSize:"12px"}}>
+                <span style={{color:T.green,fontWeight:600}}>{testResults.filter(t=>t.ok).length} passed</span> · <span style={{color:T.red,fontWeight:600}}>{testResults.filter(t=>!t.ok).length} failed</span> · {testResults.length} total
+                {testResults.every(t=>t.ok)&&<> — <Badge text="ALL PASSED ✓" color={T.green}/> All statistical methods are working correctly.</>}
+                {testResults.some(t=>!t.ok)&&<> — <Badge text="FAILURES" color={T.red}/> <span style={{color:T.red}}>Some methods may not be reliable. The detail column shows the actual vs expected value.</span></>}
               </div>
-              <div style={{maxHeight:"400px",overflowY:"auto"}}>
-                {testResults.map((t,i)=>(
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:"6px",padding:"4px 8px",marginBottom:"2px",borderRadius:"4px",background:t.ok?"transparent":T.redDim}}>
-                    {t.ok?<Check size={12} style={{color:T.green,flexShrink:0}}/>:<AlertTriangle size={12} style={{color:T.red,flexShrink:0}}/>}
-                    <span style={{fontFamily:T.font,fontSize:"10px",color:t.ok?T.textMuted:T.red}}>{t.name}</span>
-                    {t.detail&&<span style={{fontFamily:T.font,fontSize:"9px",color:T.textDim,marginLeft:"auto"}}>{t.detail}</span>}
-                  </div>))}
+              <div style={{maxHeight:"440px",overflowY:"auto"}}>
+                {/* Group tests by method */}
+                {[["Pearson",testResults.filter(t=>t.name.startsWith("Pearson"))],["Spearman",testResults.filter(t=>t.name.startsWith("Spearman"))],["Kendall",testResults.filter(t=>t.name.startsWith("Kendall"))],["Distance Correlation",testResults.filter(t=>t.name.startsWith("dCor"))],["Mutual Information",testResults.filter(t=>t.name.startsWith("MI"))],["ACF",testResults.filter(t=>t.name.startsWith("ACF"))],["ADF",testResults.filter(t=>t.name.startsWith("ADF"))],["LOWESS",testResults.filter(t=>t.name.startsWith("LOWESS"))],["CCF",testResults.filter(t=>t.name.startsWith("CCF"))],["Granger",testResults.filter(t=>t.name.startsWith("Granger"))],["Permutation Test",testResults.filter(t=>t.name.startsWith("Perm"))],["Bootstrap CI",testResults.filter(t=>t.name.startsWith("Bootstrap"))],["Bonferroni",testResults.filter(t=>t.name.startsWith("Bonferroni"))],["GBM / ML",testResults.filter(t=>t.name.startsWith("GBM")||t.name.startsWith("Perm importance")||t.name.startsWith("Walk"))]]
+                  .filter(([,tests])=>tests.length>0)
+                  .map(([group,tests])=>{
+                    const allOk=tests.every(t=>t.ok);
+                    return(<div key={group} style={{marginBottom:"8px"}}>
+                      <div style={{fontFamily:T.fontSans,fontSize:"10px",fontWeight:600,color:allOk?T.green:T.red,marginBottom:"2px",display:"flex",alignItems:"center",gap:"4px"}}>
+                        {allOk?<Check size={11}/>:<AlertTriangle size={11}/>}{group}
+                      </div>
+                      {tests.map((t,i)=>(
+                        <div key={i} style={{display:"flex",alignItems:"center",gap:"6px",padding:"3px 8px 3px 16px",marginBottom:"1px",borderRadius:"4px",background:t.ok?"transparent":T.redDim}}>
+                          {t.ok?<Check size={11} style={{color:T.green,flexShrink:0}}/>:<AlertTriangle size={11} style={{color:T.red,flexShrink:0}}/>}
+                          <span style={{fontFamily:T.font,fontSize:"10px",color:t.ok?T.textMuted:T.red,flex:1}}>{t.name}</span>
+                          {t.detail&&<span style={{fontFamily:T.font,fontSize:"9px",color:T.textDim}}>{t.detail}</span>}
+                        </div>))}</div>);})}
               </div>
               <button onClick={()=>setTestResults(null)} style={{marginTop:"8px",padding:"6px 14px",borderRadius:"6px",border:`1px solid ${T.border}`,background:"transparent",color:T.textMuted,fontFamily:T.fontSans,fontSize:"11px",cursor:"pointer"}}>Reset</button>
             </>}
@@ -800,17 +857,22 @@ function Dashboard({config,onReset}){
         </>}
 
         {/* Method reference */}
-        <div style={{...crdS,padding:"12px 14px",background:T.bgSurface}}>
-          <div style={{...lbS,marginBottom:"4px"}}><Info size={10} style={{marginRight:3}}/> Methods</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:"4px",fontFamily:T.font,fontSize:"8px"}}>
-            <div><span style={{color:T.accent}}>Pearson</span> <span style={{color:T.textDim}}>linear</span></div>
-            <div><span style={{color:T.blue}}>Spearman</span> <span style={{color:T.textDim}}>monotonic</span></div>
-            <div><span style={{color:T.purple}}>Kendall</span> <span style={{color:T.textDim}}>rank</span></div>
-            <div><span style={{color:T.cyan}}>dCor</span> <span style={{color:T.textDim}}>any dependence</span></div>
-            <div><span style={{color:T.cyan}}>MI</span> <span style={{color:T.textDim}}>nonlinear</span></div>
-            <div><span style={{color:T.green}}>Granger</span> <span style={{color:T.textDim}}>causal</span></div>
-            <div><span style={{color:T.orange}}>LOWESS</span> <span style={{color:T.textDim}}>shape</span></div>
-            <div><span style={{color:T.yellow}}>GBM+SHAP</span> <span style={{color:T.textDim}}>ML importance</span></div>
+        <div style={{...crdS,padding:"14px 16px",background:T.bgSurface}}>
+          <div style={{...lbS,marginBottom:"10px"}}><Info size={10} style={{marginRight:3}}/> Method Reference — what each metric means</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px 20px",fontFamily:T.fontSans,fontSize:"11px"}}>
+            <div><span style={{color:T.accent,fontWeight:600}}>Pearson r</span> <span style={{color:T.textMuted}}>— linear correlation. Range -1 to 1. Best for straight-line relationships. Sensitive to outliers.</span></div>
+            <div><span style={{color:T.blue,fontWeight:600}}>Spearman r</span> <span style={{color:T.textMuted}}>— rank correlation. Captures monotonic relationships (consistently increasing/decreasing) even if not perfectly linear.</span></div>
+            <div><span style={{color:T.purple,fontWeight:600}}>Kendall τ</span> <span style={{color:T.textMuted}}>— another rank measure, robust to outliers. Good when sample sizes are small.</span></div>
+            <div><span style={{color:T.cyan,fontWeight:600}}>dCor</span> <span style={{color:T.textMuted}}>— distance correlation. Detects ANY dependence including U-shapes and complex patterns. 0 = independent.</span></div>
+            <div><span style={{color:T.cyan,fontWeight:600}}>MI</span> <span style={{color:T.textMuted}}>— mutual information. Measures shared information. High MI = signal tells you a lot about the target, even nonlinearly.</span></div>
+            <div><span style={{color:T.green,fontWeight:600}}>Granger</span> <span style={{color:T.textMuted}}>— causality test. Does the signal's PAST help forecast the target better than the target's own past? Low p = yes.</span></div>
+            <div><span style={{color:T.orange,fontWeight:600}}>LOWESS</span> <span style={{color:T.textMuted}}>— smoothed trend line. Shows the shape of the relationship — curves mean nonlinear effects Pearson would miss.</span></div>
+            <div><span style={{color:T.yellow,fontWeight:600}}>GBM + Perm Importance</span> <span style={{color:T.textMuted}}>— gradient boosting model trained in-browser. Feature importance = how much the model relies on each signal.</span></div>
+            <div><span style={{color:T.text,fontWeight:600}}>CCF / Best Lag</span> <span style={{color:T.textMuted}}>— cross-correlation at different lags. Negative lag = signal LEADS the target (predictive). Positive = signal LAGS.</span></div>
+            <div><span style={{color:T.text,fontWeight:600}}>ADF / ACF</span> <span style={{color:T.textMuted}}>— stationarity checks. Non-stationary series have trends that inflate correlations. S=stationary is better for analysis.</span></div>
+          </div>
+          <div style={{marginTop:"10px",padding:"8px 10px",borderRadius:T.r,background:T.accent+"08",border:`1px solid ${T.accent}20`,fontFamily:T.fontSans,fontSize:"10px",color:T.textMuted}}>
+            <b style={{color:T.text}}>Verdict logic:</b> Counts how many of 7 criteria are met: |Pearson|&gt;0.15, |Spearman|&gt;0.15, dCor&gt;0.15, MI&gt;0.05, Granger significant, Best lag negative with |r|&gt;0.1, Perm p&lt;0.05. <span style={{color:T.green}}>PASS ≥4</span> · <span style={{color:T.orange}}>INVESTIGATE 2–3</span> · <span style={{color:T.red}}>FAIL &lt;2</span>.
           </div>
         </div>
       </div></div>);
