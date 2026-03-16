@@ -56,7 +56,9 @@ const STAT = (() => {
   function dCor(x,y) {
     const n=x.length; if(n<5) return 0;
     const N=Math.min(n,300); // cap for O(n²)
-    const xs=x.slice(0,N),ys=y.slice(0,N);
+    // Random subsample to avoid systematic bias from ordering (e.g. early time periods)
+    const samp=n>N?(()=>{const a=[...Array(n).keys()];for(let i=n-1;i>n-N-1;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a.slice(n-N);})():[...Array(n).keys()];
+    const xs=samp.map(i=>x[i]),ys=samp.map(i=>y[i]);
     const aM=[], bM=[];
     for(let i=0;i<N;i++){ aM[i]=[]; bM[i]=[]; for(let j=0;j<N;j++){ aM[i][j]=Math.abs(xs[i]-xs[j]); bM[i][j]=Math.abs(ys[i]-ys[j]); }}
     const aRow=aM.map(r=>mean(r)), bRow=bM.map(r=>mean(r));
@@ -71,7 +73,7 @@ const STAT = (() => {
     return den<1e-15 ? 0 : Math.sqrt(Math.max(0,dCov2/den));
   }
 
-  // -- Mutual Information (k-NN approx) --
+  // -- Mutual Information (k-NN approx, KSG Estimator 1) --
   function mutualInfo(x,y,k=3) {
     const n=x.length; if(n<k*3) return 0;
     const N=Math.min(n,500);
@@ -80,12 +82,16 @@ const STAT = (() => {
     const xn=xs.map(v=>(v-mx2)/sx), yn=ys.map(v=>(v-my2)/sy);
     let miSum=0;
     const digamma = v => { let r=0; while(v<6){r-=1/v;v++;} return r+Math.log(v)-1/(2*v)-1/(12*v*v); };
-    const psiN=digamma(N), psiK=digamma(k);
+    // Adaptive k: larger sample → higher k for better bias-variance tradeoff
+    const kk = k===3 ? Math.min(5, Math.max(3, Math.floor(N/20))) : k;
+    const psiN=digamma(N), psiK=digamma(kk);
     for(let i=0;i<N;i++){
       const dists=[];
       for(let j=0;j<N;j++){ if(i===j) continue; dists.push(Math.max(Math.abs(xn[i]-xn[j]),Math.abs(yn[i]-yn[j])));}
       dists.sort((a,b)=>a-b);
-      const eps=dists[k-1]+1e-15;
+      // KSG Estimator 1: eps = exact k-th neighbor distance (no +ε inflation).
+      // Marginal counts use strict < eps, correctly excluding the boundary neighbor.
+      const eps=dists[kk-1]||1e-10;
       let nx=0,ny=0;
       for(let j=0;j<N;j++){ if(i===j) continue; if(Math.abs(xn[i]-xn[j])<eps) nx++; if(Math.abs(yn[i]-yn[j])<eps) ny++; }
       miSum+=digamma(Math.max(nx,1))+digamma(Math.max(ny,1));
@@ -122,7 +128,7 @@ const STAT = (() => {
   function acf(x,maxLag=5) {
     const n=x.length,m=mean(x); let c0=0; for(let i=0;i<n;i++) c0+=(x[i]-m)**2; c0/=n;
     const result=[1];
-    for(let lag=1;lag<=maxLag;lag++){let ck=0; for(let i=0;i<n-lag;i++) ck+=(x[i]-m)*(x[i+lag]-m); ck/=n; result.push(c0>0?ck/c0:0);}
+    for(let lag=1;lag<=maxLag;lag++){let ck=0; for(let i=0;i<n-lag;i++) ck+=(x[i]-m)*(x[i+lag]-m); ck/=(n-lag); result.push(c0>0?ck/c0:0);} // unbiased: divide by (n-lag) not n
     return result;
   }
 
@@ -379,6 +385,10 @@ function runTests() {
   const mi_y=mi_x.map(v=>2*v+1);
   const mi1=STAT.mutualInfo(mi_x,mi_y);
   check("MI: perfect linear > 0", mi1>0, `MI=${mi1.toFixed(4)}`);
+  // Nonlinear (parabola) — MI should detect it even if Pearson is ~0
+  const mi_xp=Array.from({length:100},(_,i)=>-3+6*i/99), mi_yp=mi_xp.map(v=>v*v+0.1*(Math.random()-.5));
+  const mi_nl=STAT.mutualInfo(mi_xp,mi_yp);
+  check("MI: nonlinear (parabola) > 0", mi_nl>0, `MI=${mi_nl.toFixed(4)}`);
   // Independent signals should have low MI
   const xr=Array.from({length:100},()=>Math.random()), yr=Array.from({length:100},()=>Math.random());
   const mi_ind=STAT.mutualInfo(xr,yr);
@@ -388,6 +398,9 @@ function runTests() {
   const acf1=STAT.acf([1,2,3,4,5,6,7,8,9,10],3);
   check("ACF: lag0 = 1", Math.abs(acf1[0]-1)<0.001, `ACF[0]=${acf1[0].toFixed(4)}`);
   check("ACF: trending data lag1 > 0", acf1[1]>0, `ACF[1]=${acf1[1].toFixed(4)}`);
+  // Unbiased estimator: lag-k ACF should use (n-k) denominator — result slightly higher than biased form
+  const acf_const=STAT.acf([5,5,5,5,5,5,5,5,5,5],3);
+  check("ACF: constant series lag1 = 0 (no autocorr)", Math.abs(acf_const[1])<0.001, `ACF_const[1]=${acf_const[1]}`);
 
   // -- ADF --
   const stationary=Array.from({length:200},()=>Math.random()*10);
@@ -509,13 +522,15 @@ function ConfigScreen({wb,onConfigure}){
   const effMap=useMemo(()=>{const m={...nMap};chainInfo.missing.forEach(k=>{if(!m[k]&&chainInfo.chains[k]?.length)m[k]=chainInfo.chains[k][0];});return m;},[nMap,chainInfo]);
   const addSig=()=>{if(!nS||!nC)return;setSignals(s=>[...s,{sheet:nS,valueCol:nC,directKeys:joinKeys.filter(k=>nCols.includes(k)),mappings:{...effMap},label:`${nC} (${nS})`}]);setAdding(false);setNS("");setNC("");setNMap({});};
   const handleRun=()=>{
+    const origCount=tData.length;
     const agg={};tData.forEach(r=>{const k=joinKeys.map(c=>String(r[c]??"")).join("||");if(!agg[k])agg[k]={...Object.fromEntries(joinKeys.map(c=>[c,r[c]])),__t:0};agg[k].__t+=Number(r[tCol])||0;});
     let merged=Object.values(agg);const sN=[];
     signals.forEach((sig,i)=>{let sd=applyMappings(wb.sheets[sig.sheet]||[],sig.mappings,wb);const name=sig.valueCol.replace(/\W/g,"")+"_"+i;sN.push({name,label:sig.label,color:SC[i%SC.length]});
       const sa={};sd.forEach(r=>{const k=joinKeys.map(c=>String(r[c]??"")).join("||");if(k.includes("null")||k.includes("undefined"))return;sa[k]=(sa[k]||0)+(Number(r[sig.valueCol])||0);});
       merged=merged.map(r=>{const k=joinKeys.map(c=>String(r[c]??"")).join("||");return{...r,[name]:sa[k]||0};});});
     merged=merged.map(({__t,...rest})=>({...rest,[tCol]:__t}));
-    onConfigure({data:merged,targetCol:tCol,signalNames:sN,grainCols,timeCol,joinKeys});};
+    const aggRatio=origCount/Math.max(merged.length,1);
+    onConfigure({data:merged,targetCol:tCol,signalNames:sN,grainCols,timeCol,joinKeys,aggRatio});};
   const ok=tCol&&signals.length>0&&joinKeys.length>0;
   return(<div style={{background:T.bg,minHeight:"100vh",padding:"40px",display:"flex",flexDirection:"column",alignItems:"center"}}>
     <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}select option{background:${T.bgCard};color:${T.text}}`}</style>
@@ -578,7 +593,7 @@ function ConfigScreen({wb,onConfigure}){
 const SC=[T.blue,T.orange,T.purple,T.pink,T.cyan,T.yellow,T.green,T.red];
 
 function Dashboard({config,onReset}){
-  const{data,targetCol,signalNames,grainCols,timeCol,joinKeys}=config;
+  const{data,targetCol,signalNames,grainCols,timeCol,joinKeys,aggRatio}=config;
   const[selIdx,setSelIdx]=useState(0);const[maxLag,setMaxLag]=useState(12);const[selGrain,setSelGrain]=useState("__all__");
   const[tab,setTab]=useState("metrics");const[mlDone,setMlDone]=useState(null);const[mlRunning,setMlRunning]=useState(false);
   const[testResults,setTestResults]=useState(null);
@@ -602,10 +617,12 @@ function Dashboard({config,onReset}){
       const adfX=STAT.adfTest(x), adfY=STAT.adfTest(y);
       const lw=STAT.lowess(x,y,0.3);
       const gr=STAT.granger(y,x,Math.min(8,Math.floor(x.length/5)));
+      // Granger is only reliable when both series are stationary (non-stationary = spurious result risk)
+      const grangerReliable=adfX.stationary&&adfY.stationary;
       m[sig.name]={n:x.length,pr:pe.r,pp:pe.p,sr:sp.r,sp:sp.p,kt:ke.tau,kp:ke.p,
         dc,mi,permP:perm,ciLo:ci.lo,ciHi:ci.hi,slope:lr.slope,int:lr.intercept,
         ccf:ccfRes,best,acfSig:acfX[1],acfTgt:acfY[1],adfSig:adfX,adfTgt:adfY,
-        lowess:lw,granger:gr};
+        lowess:lw,granger:gr,grangerReliable};
     });return m;
   },[signalNames,getArr,maxLag]);
 
@@ -637,12 +654,17 @@ function Dashboard({config,onReset}){
           Xrows.push(row);
         }
         const ySlice=ty.slice(maxL);
-        // Full model
+        // Hold out last 20% for unbiased permutation importance (avoids training-set overfitting)
+        const splitIdx=Math.max(Math.floor(Xrows.length*0.8),Math.min(30,Xrows.length-10));
+        const XtrainImp=Xrows.slice(0,splitIdx), ytrainImp=ySlice.slice(0,splitIdx);
+        const XtestImp=Xrows.slice(splitIdx), ytestImp=ySlice.slice(splitIdx);
+        // Full model (trained on all data for predictions display)
         const fullModel=ML.fitGBM(Xrows,ySlice,60,0.1);
         const fullPreds=ML.predictGBM(fullModel,Xrows);
         const fullRMSE=ML.rmse(ySlice,fullPreds);
-        // Importance
-        const imp=ML.permImportance(fullModel,Xrows,ySlice,3);
+        // Importance evaluated on held-out test set (more honest than training set)
+        const impModel=XtrainImp.length>=20?ML.fitGBM(XtrainImp,ytrainImp,60,0.1):fullModel;
+        const imp=XtestImp.length>=10?ML.permImportance(impModel,XtestImp,ytestImp,5):ML.permImportance(fullModel,Xrows,ySlice,5);
         const ranked=featureNames.map((f,i)=>({feature:f,importance:imp[i]})).sort((a,b)=>b.importance-a.importance);
         // Walk-forward: baseline (target lags only) vs each signal added
         const targetFeatIdx=featureNames.map((f,i)=>f.startsWith("Target_")?i:null).filter(i=>i!==null);
@@ -668,7 +690,7 @@ function Dashboard({config,onReset}){
       {/* Header */}
       <div style={{background:T.bgCard,borderBottom:`1px solid ${T.border}`,padding:"10px 22px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:"8px"}}><Crosshair size={16} style={{color:T.accent}}/><span style={{fontSize:"14px",fontWeight:700}}>Signal Explorer</span>
-          <Badge text={`${fd.length} rows`} color={T.textMuted}/><Badge text={joinKeys.join("×")} color={T.purple}/></div>
+          <Badge text={`${fd.length} rows`} color={T.textMuted}/><Badge text={joinKeys.join("×")} color={T.purple}/>{aggRatio>=2&&<Badge text={`${aggRatio.toFixed(1)}:1 sum`} color={T.orange}/>}</div>
         <div style={{display:"flex",gap:"6px",alignItems:"center"}}>
           {grainOpts.length>1&&<Sel value={selGrain} options={grainOpts} onChange={setSelGrain} width="180px"/>}
           <button onClick={onReset} style={{background:T.bgInput,border:`1px solid ${T.border}`,borderRadius:"6px",padding:"5px 10px",cursor:"pointer",color:T.textMuted,fontFamily:T.fontSans,fontSize:"11px"}}><RefreshCw size={11}/></button></div></div>
@@ -700,7 +722,7 @@ function Dashboard({config,onReset}){
                 <th key={h} title={title} style={{padding:"4px 6px",textAlign:"center",color:T.textMuted,borderBottom:`1px solid ${T.border}`,fontSize:"8px",whiteSpace:"nowrap",cursor:title?"help":"default"}}>{h}</th>)}</tr>
               </thead>
               <tbody>{signalNames.map((sig,i)=>{const m=metrics[sig.name]||{};const a=i===selIdx;
-                const nCrit=[Math.abs(m.pr||0)>.15,Math.abs(m.sr||0)>.15,(m.dc||0)>.15,(m.mi||0)>.05,m.granger?.significant,m.best?.lag<0&&Math.abs(m.best?.r||0)>.1,(m.permP||1)<.05].filter(Boolean).length;
+                const nCrit=[Math.abs(m.pr||0)>.15,Math.abs(m.sr||0)>.15,(m.dc||0)>.15,(m.mi||0)>.05,m.granger?.significant&&m.grangerReliable,m.best?.lag<0&&Math.abs(m.best?.r||0)>.1,(m.permP||1)<.05].filter(Boolean).length;
                 const verdict=nCrit>=4?"PASS":nCrit>=2?"INVESTIGATE":"FAIL";const vc=verdict==="PASS"?T.green:verdict==="INVESTIGATE"?T.orange:T.red;
                 return(<tr key={i} onClick={()=>setSelIdx(i)} style={{cursor:"pointer",background:a?T.accentDim:"transparent"}} onMouseEnter={e=>{if(!a)e.currentTarget.style.background=T.bgHover}} onMouseLeave={e=>{if(!a)e.currentTarget.style.background="transparent"}}>
                   <td style={{padding:"4px 6px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:"3px"}}><div style={{width:5,height:5,borderRadius:"50%",background:sig.color}}/><span style={{fontSize:"9px"}}>{sig.label.length>16?sig.label.slice(0,16)+"…":sig.label}</span></td>
@@ -761,6 +783,9 @@ function Dashboard({config,onReset}){
           <div style={{padding:"8px 12px",borderRadius:T.r,background:T.bgSurface,border:`1px solid ${T.border}`,fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted}}>
             <b style={{color:T.accent}}>CCF (Cross-Correlation Function)</b> — bars show correlation between the signal and target at different time offsets (lags). <b style={{color:T.accent}}>Blue bars = negative lag</b> (signal leads target — potentially predictive). <b style={{color:T.orange}}>Orange bars = positive lag</b> (signal follows target). The peak bar is your best leading indicator lag. Pair with Granger to confirm predictive power.
           </div>
+          {Math.abs(sm.acfSig||0)>.3&&Math.abs(sm.acfTgt||0)>.3&&<div style={{padding:"8px 12px",borderRadius:T.r,background:T.orange+"10",border:`1px solid ${T.orange}30`,fontFamily:T.fontSans,fontSize:"11px",color:T.orange}}>
+            <AlertTriangle size={12} style={{marginRight:5,display:"inline",verticalAlign:"middle"}}/><b>High autocorrelation in both series</b> (signal ACF lag-1={sm.acfSig?.toFixed(2)}, target ACF lag-1={sm.acfTgt?.toFixed(2)}). CCF bars may be inflated because past values of each series are correlated with future values of the other, even without a real causal link. The permutation test also assumes data is exchangeable, which is violated here. Interpret CCF peaks and permutation p-values with extra caution.
+          </div>}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"14px"}}>
             <div style={crdS}><div style={{...lbS,marginBottom:"8px",display:"flex",justifyContent:"space-between"}}><span><GitBranch size={12} style={{marginRight:4}}/> CCF</span><Sel value={maxLag} options={[4,8,12,16].map(v=>({value:v,label:`±${v}`}))} onChange={v=>setMaxLag(Number(v))} width="60px"/></div>
               <ResponsiveContainer width="100%" height={260}><BarChart data={sm.ccf||[]}><CartesianGrid strokeDasharray="3 3" stroke={T.border}/><XAxis dataKey="lag" tick={{fill:T.textDim,fontSize:9,fontFamily:T.font}} stroke={T.border}/><YAxis tick={{fill:T.textDim,fontSize:9,fontFamily:T.font}} stroke={T.border}/><Tooltip content={({active:a,payload:p})=>{if(!a||!p?.length)return null;const d=p[0]?.payload;return(<div style={{background:"#1A2232",border:`1px solid ${T.border}`,borderRadius:"6px",padding:"6px",fontSize:"10px",fontFamily:T.font}}><div style={{color:corrColor(d?.r)}}>Lag {d?.lag}: r={d?.r?.toFixed(4)}</div></div>);}}/>
@@ -776,8 +801,9 @@ function Dashboard({config,onReset}){
                   <div style={{fontSize:"10px",color:T.textDim}}>{Math.abs(sm.acfSig||0)>.3?"Signal is strongly autocorrelated — today's value is heavily influenced by yesterday's. Granger tests account for this.":"Signal is not strongly autocorrelated. Each observation is relatively independent."}</div>
                 </div>
                 <div style={{padding:"6px 8px",borderRadius:"5px",background:sm.granger?.significant?T.green+"10":T.red+"10",border:`1px solid ${sm.granger?.significant?T.green+"30":T.red+"30"}`,marginBottom:"6px"}}>
-                  <div style={{fontWeight:600,color:sm.granger?.significant?T.green:T.red}}>Granger Causality: {sm.granger?.significant?"CAUSAL ✓":"NOT CAUSAL ✗"}</div>
+                  <div style={{fontWeight:600,color:sm.granger?.significant?T.green:T.red}}>Granger Causality: {sm.granger?.significant?"CAUSAL ✓":"NOT CAUSAL ✗"}{!sm.grangerReliable&&<Badge text="⚠ NOT COUNTED IN VERDICT" color={T.orange}/>}</div>
                   <div style={{fontSize:"10px",color:T.textDim}}>Best lag={sm.granger?.bestLag}, p={sm.granger?.bestP?.toFixed(4)} — {sm.granger?.significant?`Past values of this signal significantly improve forecasts of the target at lag ${sm.granger?.bestLag}. Strong evidence of leading relationship.`:"Past values of this signal do not significantly improve forecasts of the target. May be coincident or lagging."}</div>
+                  {!sm.grangerReliable&&<div style={{fontSize:"10px",color:T.orange,marginTop:"3px"}}><AlertTriangle size={10} style={{marginRight:3,display:"inline",verticalAlign:"middle"}}/>One or both series are non-stationary — Granger result may be spurious (shared trend, not true causality). Not counted in the Verdict score. Consider first-differencing the data.</div>}
                 </div>
                 <div style={{padding:"6px 8px",borderRadius:"5px",background:T.bgSurface,border:`1px solid ${T.border}`}}>
                   <div style={{fontWeight:600,color:T.text}}>Robustness Checks</div>
@@ -872,7 +898,7 @@ function Dashboard({config,onReset}){
             <div><span style={{color:T.text,fontWeight:600}}>ADF / ACF</span> <span style={{color:T.textMuted}}>— stationarity checks. Non-stationary series have trends that inflate correlations. S=stationary is better for analysis.</span></div>
           </div>
           <div style={{marginTop:"10px",padding:"8px 10px",borderRadius:T.r,background:T.accent+"08",border:`1px solid ${T.accent}20`,fontFamily:T.fontSans,fontSize:"10px",color:T.textMuted}}>
-            <b style={{color:T.text}}>Verdict logic:</b> Counts how many of 7 criteria are met: |Pearson|&gt;0.15, |Spearman|&gt;0.15, dCor&gt;0.15, MI&gt;0.05, Granger significant, Best lag negative with |r|&gt;0.1, Perm p&lt;0.05. <span style={{color:T.green}}>PASS ≥4</span> · <span style={{color:T.orange}}>INVESTIGATE 2–3</span> · <span style={{color:T.red}}>FAIL &lt;2</span>.
+            <b style={{color:T.text}}>Verdict logic:</b> Counts how many of 7 criteria are met: |Pearson|&gt;0.15, |Spearman|&gt;0.15, dCor&gt;0.15, MI&gt;0.05, Granger significant <i style={{color:T.textDim}}>(only when both series are stationary)</i>, Best lag negative with |r|&gt;0.1, Perm p&lt;0.05. <span style={{color:T.green}}>PASS ≥4</span> · <span style={{color:T.orange}}>INVESTIGATE 2–3</span> · <span style={{color:T.red}}>FAIL &lt;2</span>.
           </div>
         </div>
       </div></div>);
