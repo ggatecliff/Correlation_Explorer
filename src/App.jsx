@@ -23,12 +23,15 @@ const STAT = (() => {
   const tCDF = (t,df) => { if(df<=0) return .5; const x=df/(df+t*t); return 1-.5*rBI(df/2,.5,x); };
   const fCDF = (f,d1,d2) => { if(f<=0) return 0; return rBI(d1/2,d2/2,d1*f/(d1*f+d2)); };
 
-  const mean = a => a.reduce((s,v)=>s+v,0)/a.length;
-  const std = (a,ddof=1) => { const m=mean(a); return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/Math.max(a.length-ddof,1)); };
+  const mean = a => a.length===0 ? 0 : a.reduce((s,v)=>s+v,0)/a.length;
+  const std = (a,ddof=1) => { if(a.length===0) return 0; const m=mean(a); return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/Math.max(a.length-ddof,1)); };
   const rank = a => { const s=[...a].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v); const r=new Array(a.length); let i=0; while(i<s.length){ let j=i; while(j<s.length&&s[j].v===s[i].v) j++; const avg=(i+j-1)/2+1; for(let k=i;k<j;k++) r[s[k].i]=avg; i=j; } return r; };
+  // Remove NaN/Infinity pairs and trim to equal length
+  const sanitizePair = (x,y) => { const n=Math.min(x.length,y.length),cx=[],cy=[]; for(let i=0;i<n;i++){if(isFinite(x[i])&&isFinite(y[i])){cx.push(x[i]);cy.push(y[i]);}} return [cx,cy]; };
 
   // -- Pearson --
   function pearson(x,y) {
+    [x,y]=sanitizePair(x,y);
     const n=x.length; if(n<3) return {r:0,p:1};
     const mx=mean(x),my=mean(y); let nm=0,dx=0,dy=0;
     for(let i=0;i<n;i++){const a=x[i]-mx,b=y[i]-my; nm+=a*b; dx+=a*a; dy+=b*b;}
@@ -41,19 +44,27 @@ const STAT = (() => {
   }
 
   // -- Spearman --
-  function spearman(x,y) { return pearson(rank(x),rank(y)); }
+  function spearman(x,y) { [x,y]=sanitizePair(x,y); return pearson(rank(x),rank(y)); }
 
   // -- Kendall --
   function kendall(x,y) {
+    [x,y]=sanitizePair(x,y);
     const n=x.length; if(n<3) return {tau:0,p:1};
-    let c=0,d=0; for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){const a=x[j]-x[i],b=y[j]-y[i]; if(a*b>0)c++; else if(a*b<0)d++;}
-    const tau=(c-d)/(n*(n-1)/2);
+    let c=0,d=0,tx=0,ty=0;
+    for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
+      const a=x[j]-x[i],b=y[j]-y[i];
+      if(a*b>0)c++; else if(a*b<0)d++;
+      if(a===0)tx++; if(b===0)ty++;
+    }
+    const denom=Math.sqrt((n*(n-1)/2-tx)*(n*(n-1)/2-ty));
+    const tau=denom<1e-15?0:(c-d)/denom;
     const z=3*tau*Math.sqrt(n*(n-1))/(Math.sqrt(2*(2*n+5)));
     return {tau,p:2*(1-normCDF(Math.abs(z)))};
   }
 
   // -- Distance Correlation --
   function dCor(x,y) {
+    [x,y]=sanitizePair(x,y);
     const n=x.length; if(n<5) return 0;
     const N=Math.min(n,300); // cap for O(n²)
     const xs=x.slice(0,N),ys=y.slice(0,N);
@@ -73,13 +84,14 @@ const STAT = (() => {
 
   // -- Mutual Information (k-NN approx) --
   function mutualInfo(x,y,k=3) {
+    [x,y]=sanitizePair(x,y);
     const n=x.length; if(n<k*3) return 0;
     const N=Math.min(n,500);
     const xs=x.slice(0,N),ys=y.slice(0,N);
     const sx=std(xs,0)||1, sy=std(ys,0)||1, mx2=mean(xs), my2=mean(ys);
     const xn=xs.map(v=>(v-mx2)/sx), yn=ys.map(v=>(v-my2)/sy);
     let miSum=0;
-    const digamma = v => { let r=0; while(v<6){r-=1/v;v++;} return r+Math.log(v)-1/(2*v)-1/(12*v*v); };
+    const digamma = v => { if(v<=0) return -Infinity; let r=0; while(v<6){r-=1/v;v++;} return r+Math.log(v)-1/(2*v)-1/(12*v*v); };
     const psiN=digamma(N), psiK=digamma(k);
     for(let i=0;i<N;i++){
       const dists=[];
@@ -107,14 +119,17 @@ const STAT = (() => {
 
   // -- Bootstrap CI --
   function bootstrapCI(x,y,nBoot=499,ci=0.95) {
+    [x,y]=sanitizePair(x,y);
     const n=x.length, rs=[];
     for(let b=0;b<nBoot;b++){
       const idx=Array.from({length:n},()=>Math.floor(Math.random()*n));
       const xb=idx.map(i=>x[i]),yb=idx.map(i=>y[i]);
-      rs.push(pearson(xb,yb).r);
+      const r=pearson(xb,yb).r;
+      if(isFinite(r)) rs.push(r);
     }
+    if(rs.length<2) return {lo:NaN,hi:NaN};
     rs.sort((a,b)=>a-b);
-    const lo=rs[Math.floor((1-ci)/2*nBoot)], hi=rs[Math.floor((1+ci)/2*nBoot)];
+    const lo=rs[Math.floor((1-ci)/2*rs.length)], hi=rs[Math.floor((1+ci)/2*rs.length)];
     return {lo,hi};
   }
 
@@ -168,6 +183,7 @@ const STAT = (() => {
 
   // -- Cross-correlation --
   function ccf(x,y,maxLag=12) {
+    [x,y]=sanitizePair(x,y);
     const res=[];
     for(let lag=-maxLag;lag<=maxLag;lag++){
       let xv,yv;
@@ -182,6 +198,7 @@ const STAT = (() => {
 
   // -- Granger Causality (simplified: compare AR(p) vs AR(p)+X model via F-test) --
   function granger(target,signal,maxLag=4) {
+    [target,signal]=sanitizePair(target,signal);
     const n=target.length; if(n<maxLag*2+10) return {bestLag:null,bestP:1,significant:false};
     let bestP=1, bestLag=null;
     for(let p=1;p<=maxLag;p++){
@@ -425,6 +442,35 @@ function runTests() {
   // -- Bootstrap CI --
   const ci1=STAT.bootstrapCI(x1,y1,199);
   check("Bootstrap CI: perfect corr CI contains 1", ci1.hi>=0.95, `[${ci1.lo.toFixed(3)},${ci1.hi.toFixed(3)}]`);
+
+  // -- Edge Cases --
+  // Empty arrays
+  const ec1=STAT.pearson([],[]);
+  check("Edge: pearson empty arrays → r=0,p=1", ec1.r===0&&ec1.p===1, `r=${ec1.r},p=${ec1.p}`);
+  // n < 3
+  const ec2=STAT.pearson([1,2],[3,4]);
+  check("Edge: pearson n<3 → r=0,p=1", ec2.r===0&&ec2.p===1, `r=${ec2.r},p=${ec2.p}`);
+  // Zero variance (constant column)
+  const ec3=STAT.pearson([1,1,1,1,1],[2,3,4,5,6]);
+  check("Edge: pearson zero-variance → r=0,p=1", ec3.r===0&&ec3.p===1, `r=${ec3.r},p=${ec3.p}`);
+  // NaN in input filtered out
+  const ec4=STAT.pearson([1,NaN,3,4,5],[2,3,4,5,6]);
+  check("Edge: pearson NaN input → finite result", isFinite(ec4.r), `r=${ec4.r}`);
+  // Infinity in input filtered out
+  const ec5=STAT.pearson([Infinity,2,3,4,5],[2,3,4,5,6]);
+  check("Edge: pearson Infinity input → finite result", isFinite(ec5.r), `r=${ec5.r}`);
+  // Mismatched lengths — uses shorter overlap
+  const ec6=STAT.pearson([1,2,3,4,5],[1,2,3]);
+  check("Edge: pearson mismatched lengths → finite result", isFinite(ec6.r), `r=${ec6.r}`);
+  // Kendall with ties
+  const ec7=STAT.kendall([1,1,2,2,3],[1,2,1,2,3]);
+  check("Edge: kendall with ties → finite tau", isFinite(ec7.tau), `τ=${ec7.tau?.toFixed(4)}`);
+  // Spearman constant column
+  const ec8=STAT.spearman([2,2,2,2,2],[1,2,3,4,5]);
+  check("Edge: spearman zero-variance → r=0,p=1", ec8.r===0&&ec8.p===1, `r=${ec8.r}`);
+  // mutualInfo with NaN
+  const ec9=STAT.mutualInfo([1,NaN,3,4,5,6,7,8,9,10],[2,3,4,5,6,7,8,9,10,11]);
+  check("Edge: mutualInfo NaN input → finite result", isFinite(ec9), `MI=${ec9?.toFixed(4)}`);
 
   // -- Bonferroni --
   const bf=STAT.bonferroni([0.01,0.04,0.5],0.05);
