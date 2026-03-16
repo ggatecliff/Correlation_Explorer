@@ -612,6 +612,19 @@ function Dashboard({config,onReset}){
   function pearson_r(x,y){return STAT.pearson(x,y);}
   function linReg2(x,y){const n=x.length,mx=STAT.mean(x),my=STAT.mean(y);let nm=0,dn=0;for(let i=0;i<n;i++){nm+=(x[i]-mx)*(y[i]-my);dn+=(x[i]-mx)**2;}const s=dn?nm/dn:0;return{slope:s,intercept:my-s*mx};}
 
+  // Auto-lag scan: CCF at every lag for every signal simultaneously
+  const lagScan=useMemo(()=>{
+    return signalNames.map(sig=>{
+      const{x,y}=getArr(sig.name);
+      if(x.length<10)return{...sig,lags:[],bestLeadLag:null,bestLeadR:0,bestAnyLag:null,bestAnyR:0};
+      const ccfResult=STAT.ccf(x,y,maxLag);
+      const leadLags=ccfResult.filter(c=>c.lag<0);
+      const bestLead=leadLags.length?leadLags.reduce((a,b)=>Math.abs(b.r)>Math.abs(a.r)?b:a):null;
+      const bestAny=ccfResult.reduce((a,b)=>Math.abs(b.r)>Math.abs(a.r)?b:a,{lag:0,r:0});
+      return{...sig,lags:ccfResult,bestLeadLag:bestLead?.lag??null,bestLeadR:bestLead?.r??0,bestAnyLag:bestAny.lag,bestAnyR:bestAny.r};
+    });
+  },[signalNames,getArr,maxLag]);
+
   const sd=useMemo(()=>{const{x,y}=getArr(sel.name);return x.map((xv,i)=>({x:xv,y:y[i]}));},[sel,getArr]);
   const sm=metrics[sel.name]||{};
   const tl=useMemo(()=>{if(!sm.slope&&sm.slope!==0)return[];const xs=sd.map(d=>d.x);if(!xs.length)return[];return[{x:Math.min(...xs),y:sm.slope*Math.min(...xs)+sm.int},{x:Math.max(...xs),y:sm.slope*Math.max(...xs)+sm.int}];},[sd,sm]);
@@ -660,7 +673,7 @@ function Dashboard({config,onReset}){
     },100);
   },[getArr,signalNames,sel]);
 
-  const TABS=[{id:"metrics",label:"All Metrics",icon:Grid3X3},{id:"scatter",label:"Scatter + LOWESS",icon:Crosshair},{id:"ccf",label:"CCF + Granger",icon:GitBranch},{id:"ml",label:"ML Analysis",icon:Brain},{id:"tests",label:"Test Suite",icon:TestTube2}];
+  const TABS=[{id:"metrics",label:"All Metrics",icon:Grid3X3},{id:"scatter",label:"Scatter + LOWESS",icon:Crosshair},{id:"ccf",label:"CCF + Granger",icon:GitBranch},{id:"lagscan",label:"Lead Finder",icon:Target},{id:"ml",label:"ML Analysis",icon:Brain},{id:"tests",label:"Test Suite",icon:TestTube2}];
 
   return(
     <div style={{background:T.bg,color:T.text,fontFamily:T.fontSans,minHeight:"100vh"}}>
@@ -855,6 +868,129 @@ function Dashboard({config,onReset}){
             </>}
           </div>
         </>}
+
+        {/* TAB: LEAD FINDER */}
+        {tab==="lagscan"&&(()=>{
+          // Sort signals by |bestLeadR| descending
+          const sorted=[...lagScan].sort((a,b)=>Math.abs(b.bestLeadR)-Math.abs(a.bestLeadR));
+          const lagValues=sorted[0]?.lags.map(l=>l.lag)||[];
+          const topPicks=sorted.filter(s=>s.bestLeadLag!==null).slice(0,3);
+          return(<>
+            {/* Explainer */}
+            <div style={{padding:"8px 12px",borderRadius:T.r,background:T.bgSurface,border:`1px solid ${T.border}`,fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted,lineHeight:1.6}}>
+              <b style={{color:T.accent}}>Lead Finder</b> scans every signal across all ±{maxLag} lag offsets simultaneously. <b style={{color:T.text}}>Negative lag = signal leads the target</b> (actionable for forecasting — shift the signal back N periods and it aligns with future target values). The heatmap shows the full correlation landscape; the table ranks signals by their best leading-lag correlation.
+              <span style={{marginLeft:"10px"}}><Sel value={maxLag} options={[4,8,12,16,20].map(v=>({value:v,label:`±${v} lags`}))} onChange={v=>setMaxLag(Number(v))} width="90px"/></span>
+            </div>
+
+            {/* Top picks summary */}
+            {topPicks.length>0&&<div style={{display:"grid",gridTemplateColumns:`repeat(${topPicks.length},1fr)`,gap:"10px"}}>
+              {topPicks.map((sig,i)=>(
+                <div key={i} onClick={()=>{const idx=signalNames.findIndex(s=>s.name===sig.name);if(idx>=0)setSelIdx(idx);}} style={{...crdS,cursor:"pointer",border:`1px solid ${sig.color}40`,background:sig.color+"08"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"5px",marginBottom:"6px"}}>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:sig.color,flexShrink:0}}/>
+                    <span style={{fontFamily:T.fontSans,fontSize:"11px",fontWeight:700,color:sig.color}}>{sig.label.length>20?sig.label.slice(0,20)+"…":sig.label}</span>
+                    <Badge text={`#${i+1}`} color={T.textDim}/>
+                  </div>
+                  <div style={{fontFamily:T.font,fontSize:"20px",fontWeight:700,color:corrColor(sig.bestLeadR),marginBottom:"2px"}}>{sig.bestLeadR.toFixed(3)}</div>
+                  <div style={{fontFamily:T.font,fontSize:"10px",color:T.textMuted}}>at lag <b style={{color:T.accent}}>{sig.bestLeadLag}</b></div>
+                  <div style={{marginTop:"6px",padding:"4px 8px",borderRadius:"5px",background:T.accent+"10",border:`1px solid ${T.accent}20`,fontFamily:T.fontSans,fontSize:"10px",color:T.accent}}>
+                    Engineer: use <b>{sig.label}</b> lagged by <b>{Math.abs(sig.bestLeadLag??0)}</b> period{Math.abs(sig.bestLeadLag??0)!==1?"s":""}
+                  </div>
+                </div>
+              ))}
+            </div>}
+
+            {/* Heatmap */}
+            <div style={crdS}>
+              <div style={{...lbS,marginBottom:"10px"}}><Target size={12} style={{marginRight:4}}/> Signal × Lag Correlation Heatmap</div>
+              <div style={{overflowX:"auto"}}>
+                {/* Lag header row */}
+                <div style={{display:"grid",gridTemplateColumns:`160px repeat(${lagValues.length},36px)`,gap:"2px",marginBottom:"2px",fontFamily:T.font,fontSize:"9px",color:T.textDim,textAlign:"center"}}>
+                  <div/>
+                  {lagValues.map(lag=>(
+                    <div key={lag} style={{padding:"2px 0",color:lag<0?T.accent:lag>0?T.orange:T.textDim,fontWeight:lag===0?700:400}}>{lag>0?"+":""}{lag}</div>
+                  ))}
+                </div>
+                {/* Signal rows */}
+                {lagScan.map((sig,si)=>(
+                  <div key={si} onClick={()=>{const idx=signalNames.findIndex(s=>s.name===sig.name);if(idx>=0)setSelIdx(idx);}}
+                    style={{display:"grid",gridTemplateColumns:`160px repeat(${lagValues.length},36px)`,gap:"2px",marginBottom:"2px",cursor:"pointer",opacity:sig.lags.length===0?.4:1}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"4px",paddingRight:"6px",overflow:"hidden"}}>
+                      <div style={{width:6,height:6,borderRadius:"50%",background:sig.color,flexShrink:0}}/>
+                      <span style={{fontFamily:T.fontSans,fontSize:"10px",color:T.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{sig.label}</span>
+                    </div>
+                    {sig.lags.length>0
+                      ?sig.lags.map(({lag,r})=>{const isBestLead=lag===sig.bestLeadLag;const isBestAny=lag===sig.bestAnyLag;return(
+                        <div key={lag} title={`${sig.label} at lag ${lag}: r=${r.toFixed(4)}`}
+                          style={{height:"22px",borderRadius:"3px",background:corrBg(r),border:isBestLead?`1px solid ${T.accent}`:isBestAny?`1px solid ${T.orange}30`:"1px solid transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          {Math.abs(r)>.15&&<span style={{fontSize:"7px",fontFamily:T.font,color:corrColor(r),fontWeight:600}}>{r.toFixed(2)}</span>}
+                        </div>);})
+                      :lagValues.map(l=><div key={l} style={{height:"22px",borderRadius:"3px",background:T.bgSurface}}/>)}
+                  </div>
+                ))}
+                {/* Legend */}
+                <div style={{display:"flex",alignItems:"center",gap:"10px",marginTop:"8px",fontFamily:T.font,fontSize:"9px",color:T.textDim}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"3px"}}><div style={{width:"12px",height:"12px",borderRadius:"2px",border:`1px solid ${T.accent}`,background:"transparent"}}/> best leading lag</div>
+                  <div style={{display:"flex",alignItems:"center",gap:"3px"}}><div style={{width:"12px",height:"12px",borderRadius:"2px",background:T.green+"60"}}/> positive r</div>
+                  <div style={{display:"flex",alignItems:"center",gap:"3px"}}><div style={{width:"12px",height:"12px",borderRadius:"2px",background:T.red+"60"}}/> negative r</div>
+                  <div>Lag &lt; 0 = signal leads target <span style={{color:T.accent}}>(predictive)</span> · Lag &gt; 0 = signal lags target</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Ranked table */}
+            <div style={crdS}>
+              <div style={{...lbS,marginBottom:"8px"}}><Layers size={12} style={{marginRight:4}}/> Ranked Leading Indicators</div>
+              <div style={{overflowX:"auto"}}>
+                <table style={{borderCollapse:"collapse",fontFamily:T.font,fontSize:"10px",width:"100%"}}>
+                  <thead>
+                    <tr>{[["Signal",""],["Best Lead Lag","Lag where |r| is highest among negative lags (signal leads target)"],["r @ Lead","Pearson correlation at the best leading lag"],["Best Any Lag","Lag with highest |r| including positive lags"],["r @ Best","Pearson r at best any-lag"],["Rec.","Recommended feature engineering action"]].map(([h,title])=>(
+                      <th key={h} title={title} style={{padding:"4px 8px",textAlign:"left",color:T.textMuted,borderBottom:`1px solid ${T.border}`,fontSize:"9px",whiteSpace:"nowrap",cursor:title?"help":"default"}}>{h}</th>
+                    ))}</tr>
+                  </thead>
+                  <tbody>
+                    {sorted.map((sig,i)=>{
+                      const origIdx=signalNames.findIndex(s=>s.name===sig.name);
+                      const isActive=origIdx===selIdx;
+                      const hasLead=sig.bestLeadLag!==null;
+                      return(
+                        <tr key={i} onClick={()=>{if(origIdx>=0)setSelIdx(origIdx);}} style={{cursor:"pointer",background:isActive?T.accentDim:"transparent"}}
+                          onMouseEnter={e=>{if(!isActive)e.currentTarget.style.background=T.bgHover}}
+                          onMouseLeave={e=>{if(!isActive)e.currentTarget.style.background="transparent"}}>
+                          <td style={{padding:"5px 8px",borderBottom:`1px solid ${T.border}`}}>
+                            <div style={{display:"flex",alignItems:"center",gap:"4px"}}>
+                              <span style={{fontSize:"9px",color:T.textDim,minWidth:"14px"}}>{i+1}.</span>
+                              <div style={{width:6,height:6,borderRadius:"50%",background:sig.color,flexShrink:0}}/>
+                              <span style={{color:T.text}}>{sig.label.length>18?sig.label.slice(0,18)+"…":sig.label}</span>
+                            </div>
+                          </td>
+                          <td style={{padding:"5px 8px",borderBottom:`1px solid ${T.border}`,textAlign:"center",color:hasLead?T.accent:T.textDim,fontWeight:hasLead?700:400}}>
+                            {hasLead?sig.bestLeadLag:"—"}
+                          </td>
+                          <td style={{padding:"5px 8px",borderBottom:`1px solid ${T.border}`,textAlign:"center",color:corrColor(sig.bestLeadR),fontWeight:600,background:corrBg(sig.bestLeadR)}}>
+                            {hasLead?sig.bestLeadR.toFixed(3):"—"}
+                          </td>
+                          <td style={{padding:"5px 8px",borderBottom:`1px solid ${T.border}`,textAlign:"center",color:sig.bestAnyLag!==null?T.orange:T.textDim}}>
+                            {sig.bestAnyLag!==null?(sig.bestAnyLag>0?"+":"")+sig.bestAnyLag:"—"}
+                          </td>
+                          <td style={{padding:"5px 8px",borderBottom:`1px solid ${T.border}`,textAlign:"center",color:corrColor(sig.bestAnyR),fontWeight:600,background:corrBg(sig.bestAnyR)}}>
+                            {sig.bestAnyR?sig.bestAnyR.toFixed(3):"—"}
+                          </td>
+                          <td style={{padding:"5px 8px",borderBottom:`1px solid ${T.border}`}}>
+                            {hasLead
+                              ?<span style={{fontFamily:T.fontSans,fontSize:"9px",color:T.accent}}>Lag <b>{sig.label.split(" ")[0]}</b> by {Math.abs(sig.bestLeadLag)} period{Math.abs(sig.bestLeadLag)!==1?"s":""}</span>
+                              :<span style={{fontFamily:T.fontSans,fontSize:"9px",color:T.textDim}}>No leading lag found</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{marginTop:"6px",fontFamily:T.font,fontSize:"8px",color:T.textDim}}>Sorted by |r| at best leading lag (signal leads target). Blue outlined cell = best leading lag in heatmap above.</div>
+            </div>
+          </>);
+        })()}
 
         {/* Method reference */}
         <div style={{...crdS,padding:"14px 16px",background:T.bgSurface}}>
