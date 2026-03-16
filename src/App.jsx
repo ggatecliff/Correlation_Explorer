@@ -746,10 +746,10 @@ function Dashboard({config,onReset}){
               dCor = distance correlation · MI = mutual information · Perm = permutation test p-value · ADF: S=stationary · Verdict: ≥4/7 criteria = PASS</div>
           </div>
           {/* Time series */}
-          <div style={crdS}><div style={{...lbS,marginBottom:"8px"}}><Activity size={12} style={{marginRight:4}}/> Time Series</div>
-            <ResponsiveContainer width="100%" height={170}><ComposedChart data={ts}><CartesianGrid strokeDasharray="3 3" stroke={T.border}/><XAxis dataKey="idx" tick={{fill:T.textDim,fontSize:8,fontFamily:T.font}} stroke={T.border} interval="preserveStartEnd"/><YAxis tick={{fill:T.textDim,fontSize:9,fontFamily:T.font}} stroke={T.border} tickFormatter={v=>fmt(v)}/><Tooltip content={<Tip/>}/>
-              <Line dataKey="target" name={targetCol} stroke={T.text} strokeWidth={2} dot={false}/>
-              {signalNames.map((s,i)=><Line key={i} dataKey={s.name} name={s.label} stroke={s.color} strokeWidth={i===selIdx?2:1} dot={false} strokeDasharray={i===selIdx?undefined:"4 3"} strokeOpacity={i===selIdx?1:.4}/>)}
+          <div style={crdS}><div style={{...lbS,marginBottom:"8px"}}><Activity size={12} style={{marginRight:4}}/> Time Series <span style={{fontFamily:T.font,fontSize:"9px",color:T.textDim,marginLeft:8}}>left axis = target · right axis = signal</span></div>
+            <ResponsiveContainer width="100%" height={170}><ComposedChart data={ts}><CartesianGrid strokeDasharray="3 3" stroke={T.border}/><XAxis dataKey="idx" tick={{fill:T.textDim,fontSize:8,fontFamily:T.font}} stroke={T.border} interval="preserveStartEnd"/><YAxis yAxisId="left" tick={{fill:T.textDim,fontSize:9,fontFamily:T.font}} stroke={T.border} tickFormatter={v=>fmt(v)}/><YAxis yAxisId="right" orientation="right" tick={{fill:T.textDim,fontSize:9,fontFamily:T.font}} stroke={T.border} tickFormatter={v=>fmt(v)}/><Tooltip content={<Tip/>}/>
+              <Line yAxisId="left" dataKey="target" name={targetCol} stroke={T.text} strokeWidth={2} dot={false}/>
+              {signalNames.map((s,i)=><Line yAxisId="right" key={i} dataKey={s.name} name={s.label} stroke={s.color} strokeWidth={i===selIdx?2:1} dot={false} strokeDasharray={i===selIdx?undefined:"4 3"} strokeOpacity={i===selIdx?1:.4}/>)}
             </ComposedChart></ResponsiveContainer></div>
         </>}
 
