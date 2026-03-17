@@ -100,7 +100,7 @@ const STAT = (() => {
       const eps=dists[k-1]+1e-15;
       let nx=0,ny=0;
       for(let j=0;j<N;j++){ if(i===j) continue; if(Math.abs(xn[i]-xn[j])<eps) nx++; if(Math.abs(yn[i]-yn[j])<eps) ny++; }
-      miSum+=digamma(Math.max(nx,1))+digamma(Math.max(ny,1));
+      miSum+=digamma(nx+1)+digamma(ny+1);
     }
     return Math.max(0, psiK - miSum/N + psiN);
   }
@@ -396,6 +396,7 @@ function runTests() {
   const mi_y=mi_x.map(v=>2*v+1);
   const mi1=STAT.mutualInfo(mi_x,mi_y);
   check("MI: perfect linear > 0", mi1>0, `MI=${mi1.toFixed(4)}`);
+  check("MI: perfect linear > 1.0 nats (KSG regression)", mi1>1.0, `MI=${mi1.toFixed(4)}`);
   // Independent signals should have low MI
   const xr=Array.from({length:100},()=>Math.random()), yr=Array.from({length:100},()=>Math.random());
   const mi_ind=STAT.mutualInfo(xr,yr);
@@ -541,10 +542,37 @@ function UploadScreen({onData}){
       <div style={{fontFamily:T.fontSans,fontSize:"12px",color:T.textMuted}}>Multi-sheet with automatic join chain detection</div></div></div>);
 }
 
+// ── SCHEMA AUTO-DETECTION ───────────────────────────────
+const KNOWN_SCHEMAS=[
+  {type:"offtake",   valueCol:"OfftakeUnits",              timeCol:"WeekIndex",grainCols:["Part","Customer","Site"]},
+  {type:"shipments", valueCol:"ShippedUnits",              timeCol:"WeekIndex",grainCols:["Part","Customer","Site"]},
+  {type:"pos",       valueCol:"Projected_Total_POS_Units", timeCol:"WeekIndex",grainCols:["Part","Customer","Site"]},
+];
+function detectSchema(sheetData){
+  if(!sheetData?.length)return null;
+  const cols=Object.keys(sheetData[0]);
+  return KNOWN_SCHEMAS.find(s=>cols.includes(s.valueCol))||null;
+}
+function autoDetectConfig(wb){
+  const detected=wb.sheetNames.map(sn=>{const s=detectSchema(wb.sheets[sn]);return s?{...s,sheetName:sn}:null;}).filter(Boolean);
+  if(detected.length<2)return null;
+  const priority=["offtake","shipments","pos"];
+  detected.sort((a,b)=>priority.indexOf(a.type)-priority.indexOf(b.type));
+  const target=detected[0];
+  const joinKeys=[target.timeCol,...target.grainCols];
+  return{
+    tSheet:target.sheetName,tCol:target.valueCol,
+    timeCol:target.timeCol,grainCols:target.grainCols,
+    signals:detected.slice(1).map(s=>({sheet:s.sheetName,valueCol:s.valueCol,directKeys:joinKeys,mappings:{},label:`${s.valueCol} (${s.sheetName})`})),
+    detected,
+  };
+}
+
 // ── CONFIG ──────────────────────────────────────────────
 function ConfigScreen({wb,onConfigure}){
-  const[tSheet,setTSheet]=useState(wb.sheetNames[0]);const[tCol,setTCol]=useState("");const[timeCol,setTimeCol]=useState("");
-  const[grainCols,setGrainCols]=useState([]);const[signals,setSignals]=useState([]);
+  const autoConf=useMemo(()=>autoDetectConfig(wb),[wb]);
+  const[tSheet,setTSheet]=useState(()=>autoConf?.tSheet||wb.sheetNames[0]);const[tCol,setTCol]=useState(()=>autoConf?.tCol||"");const[timeCol,setTimeCol]=useState(()=>autoConf?.timeCol||"");
+  const[grainCols,setGrainCols]=useState(()=>autoConf?.grainCols||[]);const[signals,setSignals]=useState(()=>autoConf?.signals||[]);
   const[adding,setAdding]=useState(false);const[nS,setNS]=useState("");const[nC,setNC]=useState("");const[nMap,setNMap]=useState({});
   const tData=useMemo(()=>wb.sheets[tSheet]||[],[wb,tSheet]);const tCols=useMemo(()=>tData.length?Object.keys(tData[0]):[],[tData]);
   const tNum=useMemo(()=>tCols.filter(c=>tData.slice(0,20).some(r=>typeof r[c]==="number")),[tCols,tData]);
@@ -567,6 +595,15 @@ function ConfigScreen({wb,onConfigure}){
     <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}select option{background:${T.bgCard};color:${T.text}}`}</style>
     <div style={{maxWidth:"750px",width:"100%"}}>
       <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"16px"}}><Crosshair size={20} style={{color:T.accent}}/><div style={{fontFamily:T.fontSans,fontSize:"18px",fontWeight:700,color:T.text}}>Configure Analysis</div><Badge text={wb.fileName} color={T.textMuted}/></div>
+      {/* Auto-detect banner */}
+      {autoConf&&<div style={{...crdS,marginBottom:"14px",background:`rgba(63,185,80,.08)`,border:`1px solid ${T.green}40`,padding:"12px 16px"}}>
+        <div style={{fontFamily:T.fontSans,fontSize:"12px",color:T.green,fontWeight:600,marginBottom:"4px"}}><Zap size={12} style={{marginRight:4,display:"inline",verticalAlign:"middle"}}/> Auto-detected {autoConf.detected.length} known signal types</div>
+        <div style={{fontFamily:T.fontSans,fontSize:"11px",color:T.textMuted,lineHeight:1.6}}>
+          {autoConf.detected.map(d=><span key={d.sheetName} style={{marginRight:"10px"}}><b style={{color:T.text,textTransform:"capitalize"}}>{d.type}</b> — <span style={{color:T.textDim}}>{d.sheetName}</span> ({d.valueCol})</span>)}<br/>
+          Pre-configured: target = <b style={{color:T.text}}>{autoConf.tCol}</b>, signals = <b style={{color:T.text}}>{autoConf.signals.map(s=>s.valueCol).join(", ")}</b>, joined by <b style={{color:T.accent}}>{[autoConf.timeCol,...autoConf.grainCols].join(" × ")}</b>.<br/>
+          <span style={{color:T.textDim}}>You can still modify anything below.</span>
+        </div>
+      </div>}
       {/* How it works banner */}
       <div style={{...crdS,marginBottom:"14px",background:T.accentDim,border:`1px solid ${T.accent}30`,padding:"12px 16px"}}>
         <div style={{fontFamily:T.fontSans,fontSize:"12px",color:T.accent,fontWeight:600,marginBottom:"4px"}}><Info size={12} style={{marginRight:4,display:"inline",verticalAlign:"middle"}}/> How this works</div>
