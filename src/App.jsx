@@ -274,7 +274,8 @@ const ML = (() => {
   }
 
   function fitGBM(X,y,nTrees=50,lr=0.1) {
-    const n=X.length,nFeats=X[0].length;
+    const n=X.length; if(n===0||!X[0])return{basePred:STAT.mean(y),trees:[]};
+    const nFeats=X[0].length;
     const basePred=STAT.mean(y);
     let preds=new Array(n).fill(basePred);
     const trees=[];
@@ -303,10 +304,11 @@ const ML = (() => {
     });
   }
 
-  function rmse(actual,pred) { let s=0; for(let i=0;i<actual.length;i++) s+=(actual[i]-pred[i])**2; return Math.sqrt(s/actual.length); }
+  function rmse(actual,pred) { if(!actual.length)return 0; let s=0; for(let i=0;i<actual.length;i++) s+=(actual[i]-pred[i])**2; return Math.sqrt(s/actual.length); }
 
   // Permutation importance
   function permImportance(model,X,y,nShuffles=5) {
+    if(!X.length||!X[0])return[];
     const basePreds=predictGBM(model,X);
     const baseRMSE=rmse(y,basePreds);
     const nFeats=X[0].length;
@@ -583,10 +585,10 @@ function ConfigScreen({wb,onConfigure}){
   const effMap=useMemo(()=>{const m={...nMap};chainInfo.missing.forEach(k=>{if(!m[k]&&chainInfo.chains[k]?.length)m[k]=chainInfo.chains[k][0];});return m;},[nMap,chainInfo]);
   const addSig=()=>{if(!nS||!nC)return;setSignals(s=>[...s,{sheet:nS,valueCol:nC,directKeys:joinKeys.filter(k=>nCols.includes(k)),mappings:{...effMap},label:`${nC} (${nS})`}]);setAdding(false);setNS("");setNC("");setNMap({});};
   const handleRun=()=>{
-    const agg={};tData.forEach(r=>{const k=joinKeys.map(c=>String(r[c]??"")).join("||");if(!agg[k])agg[k]={...Object.fromEntries(joinKeys.map(c=>[c,r[c]])),__t:0};agg[k].__t+=Number(r[tCol])||0;});
+    const agg={};tData.forEach(r=>{if(joinKeys.some(c=>r[c]==null))return;const k=joinKeys.map(c=>String(r[c])).join("||");if(!agg[k])agg[k]={...Object.fromEntries(joinKeys.map(c=>[c,r[c]])),__t:0};agg[k].__t+=Number(r[tCol])||0;});
     let merged=Object.values(agg);const sN=[];
     signals.forEach((sig,i)=>{let sd=applyMappings(wb.sheets[sig.sheet]||[],sig.mappings,wb);const name=sig.valueCol.replace(/\W/g,"")+"_"+i;sN.push({name,label:sig.label,color:SC[i%SC.length]});
-      const sa={};sd.forEach(r=>{const k=joinKeys.map(c=>String(r[c]??"")).join("||");if(k.includes("null")||k.includes("undefined"))return;sa[k]=(sa[k]||0)+(Number(r[sig.valueCol])||0);});
+      const sa={};sd.forEach(r=>{if(joinKeys.some(c=>r[c]==null))return;const k=joinKeys.map(c=>String(r[c])).join("||");sa[k]=(sa[k]||0)+(Number(r[sig.valueCol])||0);});
       merged=merged.map(r=>{const k=joinKeys.map(c=>String(r[c]??"")).join("||");return{...r,[name]:sa[k]||0};});});
     merged=merged.map(({__t,...rest})=>({...rest,[tCol]:__t}));
     onConfigure({data:merged,targetCol:tCol,signalNames:sN,grainCols,timeCol,joinKeys});};
@@ -710,6 +712,7 @@ function Dashboard({config,onReset}){
         const featureNames=[]; const Xrows=[];
         const allSigArrays=signalNames.map(s=>getArr(s.name));
         const n=ty.length; const maxL=4;
+        if(n<=maxL){setMlDone({error:`Need at least ${maxL+1} aligned rows to build lag features (got ${n}). Try removing the grain filter or uploading more data.`});setMlRunning(false);return;}
         for(let i=maxL;i<n;i++){
           const row=[];
           signalNames.forEach((s,si)=>{
